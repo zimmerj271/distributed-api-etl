@@ -1,0 +1,62 @@
+# ============================================================
+# PIPELINE CONFIGURATION
+# ============================================================
+
+# -------------------------
+# Endpoint Configuration
+# -------------------------
+endpoint:
+  name: procedure 
+  base_url: "https://naas.isalman.dev/"
+  url_path: "https://naas.isalman.dev/no"
+  method: GET 
+  vendor: NaaS 
+  headers:
+    Accept: "application/json"
+
+# -------------------------
+# Transport Decoratos
+# -------------------------
+transport:
+  base_timeout: 30
+  warmup_timeout: 10
+  tcp_connection:
+    limit: 2
+
+# -------------------------
+# Authentication
+# -------------------------
+auth:
+  type: none 
+
+# -------------------------
+# Middleware Pipeline
+# -------------------------
+middleware:
+  - type: logging
+  - type: timing
+  - type: json_body
+  - type: retry
+    max_attempts: 5
+    retry_status_codes: [429, 500, 502, 503]
+    base_delay: 0.2
+    max_delay: 2.0
+
+# -------------------------
+# ETL Tables
+# -------------------------
+tables:
+
+  sink:
+    name: naas_api_response
+    namespace: keystone_dev.test
+    mode: overwrite
+
+  column_mappings: []
+
+# -------------------------
+# Execution
+# -------------------------
+execution:
+  num_partitions: 5
+  batch_size: 100
