@@ -104,11 +104,22 @@ class ProcessScope(Generic[T]):
         return self._resources[key]
 
     async def close(self) -> None:
+        exceptions = []
+
         for resource in self._resources.values():
             if hasattr(resource, "__aexit__"):
-                await resource.__aexit__(None, None, None)
+                try:
+                    await resource.__aexit__(None, None, None)
+                except Exception as e:
+                    exceptions.append(e)
 
         self._resources.clear()
+
+        if exceptions:
+            if len(exceptions) == 1:
+                raise exceptions[0]
+            else:
+                raise ExceptionGroup("Multiple cleanup failures", exceptions)
 
 
 class WorkerResourceManager:

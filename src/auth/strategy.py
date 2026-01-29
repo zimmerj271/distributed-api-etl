@@ -1,19 +1,22 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Callable, Protocol, Any 
-
 from pyspark.sql import SparkSession
-from auth.token.token_manager import TokenManager
-from auth.rpc.bootstrap import RpcBootstrapper
-from transport.base import TransportEngine
+
 from auth.token.token_provider import (
     RpcTokenProvider, 
-    StaticTokenProvider, 
+    StaticTokenProvider,
     PasswordGrantTokenProvider,
     FallbackTokenProvider
 )
-from middleware.pipeline import MIDDLEWARE_FUNC
-from middleware.common import BearerTokenMiddleware, HeaderAuthMiddleware
+from auth.token.token_manager import TokenManager
+from auth.rpc.bootstrap import RpcBootstrapper
+from request_execution.middleware.common import (
+    BearerTokenMiddleware, 
+    HeaderAuthMiddleware
+)
+from request_execution.middleware.pipeline import MIDDLEWARE_FUNC
+from request_execution.transport.base import TransportEngine
 from core.abstract_factory import TypeAbstractFactory
 
 

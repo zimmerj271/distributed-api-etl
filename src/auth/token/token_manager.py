@@ -1,8 +1,10 @@
 import logging
 import asyncio
 from typing import Coroutine, Any
+
 from core.singleton import SingletonMeta
-from auth.token.token_provider import TokenProvider, Token
+from auth.token.token_provider import TokenProvider
+from auth.token.models import Token
 
 
 class TokenManager(metaclass=SingletonMeta):

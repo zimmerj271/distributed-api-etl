@@ -3,15 +3,13 @@ from typing import AsyncGenerator, Callable, Iterable
 from pyspark.sql import Row
 
 from core.runtime import WorkerResourceManager
-from clients.base import RequestContext, RequestExchange 
-from middleware.pipeline import MIDDLEWARE_FUNC
-from middleware.listeners import (
-    TransportDiagnosticMiddleware
-)
-from middleware.interceptors import ParamInjectorMiddleware
-from pipeline.base import PartitionExecutor 
-from transport.base import TransportEngine
-from clients.http_client import ApiClient
+from request_execution.models import RequestContext, RequestExchange
+from request_execution.middleware.pipeline import MIDDLEWARE_FUNC
+from request_execution.middleware.listeners import TransportDiagnosticMiddleware
+from request_execution.middleware.interceptors import ParamInjectorMiddleware
+from request_execution.transport.base import TransportEngine
+from pipeline.base import PartitionExecutor
+from request_execution.executor import RequestExecutor 
 
 
 class ApiPartitionExecutor(PartitionExecutor):
@@ -56,7 +54,7 @@ class ApiPartitionExecutor(PartitionExecutor):
                 factory=self._transport_factory
             )
 
-            client = ApiClient(transport)
+            client = RequestExecutor(transport)
             request_context = self._endpoint_factory()
 
             if request_context.param_mapping is not None:

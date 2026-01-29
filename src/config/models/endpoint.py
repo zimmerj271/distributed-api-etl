@@ -1,7 +1,7 @@
 from typing import Any
 from pydantic import Field, field_validator, BaseModel
 
-from clients.base import RequestType
+from request_execution.models import RequestType
 
 
 class EndpointConfigModel(BaseModel):

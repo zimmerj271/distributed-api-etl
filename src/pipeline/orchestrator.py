@@ -5,29 +5,29 @@ from pyspark.sql import DataFrame, SparkSession
 from pathlib import Path
 
 from utils.platform import PlatformDetector
-from core.logging import configure_logging, set_py4j_logging_level
 from core.table_manager import TableManager
-from transport.base import TransportEngine
-from clients.base import RequestContext
-from config.models.transport import TransportEngineModel
-from config.models.data_contract import EtlTableConfig, SourceTableConfig
+from core.logging import configure_logging, set_py4j_logging_level
+from request_execution.transport.base import TransportEngine
+from request_execution.models import RequestContext
+from request_execution.middleware.pipeline import MIDDLEWARE_FUNC
 from config.models.pipeline import PipelineConfig
 from config.models.endpoint import EndpointConfigModel
 from config.models.auth import AuthConfigModel
 from config.models.middleware import MiddlewareConfigModel
 from config.models.execution import ExecutionConfig
+from config.models.data_contract import EtlTableConfig, SourceTableConfig
+from config.models.transport import TransportEngineModel
 from config.loader import ConfigLoader
 from config.preprocessor import DatabricksSecretsPreprocessor, DatabricksUtils
 from config.factories import (
-    TransportRuntimeFactory, 
-    EndpointRuntimeFactory, 
+    TransportRuntimeFactory,
+    EndpointRuntimeFactory,
     MiddlewareRuntimeFactory
 )
 from auth.strategy import AuthRuntime, AuthStrategyFactory
 from pipeline.partition_executor import ApiPartitionExecutor
 from pipeline.batch_handler import ApiBatchHandler
 from pipeline.batch_processor import BatchProcessor
-from middleware.pipeline import MIDDLEWARE_FUNC
 
 
 class PipelineOrchestrator:

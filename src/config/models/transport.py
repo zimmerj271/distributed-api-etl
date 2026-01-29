@@ -1,7 +1,8 @@
 from pathlib import Path
 from typing import Any 
 from pydantic import Field, BaseModel
-from transport.base import TransportEngineType
+
+from request_execution.transport.base import TransportEngineType
 
 
 class TlsConfig(BaseModel): 

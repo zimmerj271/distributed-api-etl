@@ -4,10 +4,17 @@ from typing import Any, Callable
 from config.models.transport import TransportEngineModel
 from config.models.middleware import MiddlewareConfigModel
 from config.models.endpoint import EndpointConfigModel
-from transport.base import TransportEngine
-from transport.engine import AiohttpEngine
-from middleware.pipeline import MiddlewareFactory, MIDDLEWARE_FUNC
-from clients.base import RequestContext, RequestMapping, RequestType
+from request_execution.transport.base import TransportEngine
+from request_execution.transport.engine import AiohttpEngine
+from request_execution.middleware.pipeline import (
+    MiddlewareFactory, 
+    MIDDLEWARE_FUNC,
+)
+from request_execution.models import (
+    RequestContext, 
+    RequestMapping, 
+    RequestType
+)
 
 
 class RuntimeFactory(ABC):

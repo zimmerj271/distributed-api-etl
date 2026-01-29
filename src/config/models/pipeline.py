@@ -1,13 +1,11 @@
-from pydantic import Field
+from pydantic import Field, BaseModel
+
 from config.models.execution import ExecutionConfig
 from config.models.transport import AiohttpEngineConfig
-from config.models.auth import AuthConfigUnion
 from config.models.endpoint import EndpointConfigModel
+from config.models.auth import AuthConfigUnion
 from config.models.middleware import MiddlewareConfigModel
 from config.models.data_contract import EtlTableConfig
-
-
-from pydantic import BaseModel
 
 
 class PipelineConfig(BaseModel):
