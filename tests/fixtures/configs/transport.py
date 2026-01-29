@@ -3,7 +3,7 @@ from config.models.transport import (
     AiohttpEngineConfig,
     TcpConnectionConfig,
 )
-from transport.base import TransportEngineType
+from request_execution.transport.base import TransportEngineType
 
 
 @pytest.fixture

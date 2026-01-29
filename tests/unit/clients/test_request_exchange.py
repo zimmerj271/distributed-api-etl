@@ -1,4 +1,4 @@
-from clients.base import RequestExchange, RequestContext, RequestType
+from request_execution import RequestExchange, RequestContext, RequestType
 
 
 def test_request_exchange_build_row():

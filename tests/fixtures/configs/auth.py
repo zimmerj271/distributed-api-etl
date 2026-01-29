@@ -3,7 +3,7 @@ from config.models.auth import (
     NoAuthConfig,
     BasicAuthConfig,
     BearerTokenConfig,
-    OAuth2PasswordConfig,
+    OAuth2PasswordConfig
 )
 from auth.strategy import AuthType
 

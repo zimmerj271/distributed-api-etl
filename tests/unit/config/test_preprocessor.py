@@ -1,8 +1,9 @@
-from config.preprocessor import (
+import pytest
+from config import (
     ConfigValue, 
     DatabricksSecretsPreprocessor, 
     DatabricksUtils, 
-    SecretsClient
+    SecretsClient,
 )
 
 
@@ -17,6 +18,8 @@ class FakeDbutils(DatabricksUtils):
         self.secrets = FakeSecrets()
 
 
+@pytest.mark.unit
+@pytest.mark.config
 def test_secret_replacement_scalar():
     pre = DatabricksSecretsPreprocessor(FakeDbutils())
 
@@ -25,6 +28,8 @@ def test_secret_replacement_scalar():
     assert result == "resolved:my_scope:my_key"
 
 
+@pytest.mark.unit
+@pytest.mark.config
 def test_secret_replacement_nested():
     pre = DatabricksSecretsPreprocessor(FakeDbutils())
 

@@ -1,6 +1,10 @@
-from config.models.middleware import RetryMiddlewareModel
+import pytest
+from config import RetryMiddlewareModel
 
 
+@pytest.mark.unit
+@pytest.mark.config
+@pytest.mark.middleware
 def test_retry_middleware_runtime_args():
     cfg = RetryMiddlewareModel(max_attempts=3)
     args = cfg.to_runtime_args()

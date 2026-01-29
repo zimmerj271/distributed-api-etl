@@ -1,8 +1,8 @@
 import pytest
 from typing import Any
-from auth.token.token_manager import TokenManager
-from middleware.common import BearerTokenMiddleware, HeaderAuthMiddleware
-from tests.fixtures.middleware import base_exchange, terminal_handler_ok
+from auth import TokenManager
+from request_execution import BearerTokenMiddleware, HeaderAuthMiddleware 
+from tests.fixtures.request_execution import base_exchange, terminal_handler_ok
 
 
 class FakeTokenManager(TokenManager):

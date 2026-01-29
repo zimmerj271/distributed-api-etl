@@ -1,4 +1,4 @@
-from clients.base import RequestContext, RequestType
+from request_execution import RequestContext, RequestType
 
 
 def test_request_context_with_headers():

@@ -1,6 +1,6 @@
 import pytest
 from config.models.endpoint import EndpointConfigModel
-from clients.base import RequestType
+from request_execution.models import RequestType
 
 
 @pytest.fixture

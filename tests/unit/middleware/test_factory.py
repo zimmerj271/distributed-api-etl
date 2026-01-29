@@ -1,4 +1,4 @@
-from middleware.pipeline import MiddlewareFactory, MiddlewareType
+from request_execution import MiddlewareFactory, MiddlewareType
 
 
 def test_middleware_factory_has_registered_types():

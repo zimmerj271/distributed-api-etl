@@ -1,14 +1,14 @@
 import pytest
-from tests.fixtures.configs.auth import (
+from .fixtures.configs.auth import(
     no_auth,
     basic_auth,
     bearer_auth,
-    oauth2_password_auth
+    oauth2_password_auth,
 )
-from tests.fixtures.configs.data_contract import simple_table_schema
-from tests.fixtures.configs.endpoint import valid_endpoint_config
-from tests.fixtures.configs.pipeline import minimal_pipeline_config
-from tests.fixtures.configs.transport import aiohttp_config
+from .fixtures.configs.data_contract import simple_table_schema
+from .fixtures.configs.endpoint import valid_endpoint_config
+from .fixtures.configs.pipeline import minimal_pipeline_config
+from .fixtures.configs.transport import aiohttp_config
 
 @pytest.fixture
 def dummy_headers():
@@ -17,3 +17,13 @@ def dummy_headers():
         "Authorization": "Bearer dummy-token"
     }
 
+__all__ = [
+    'no_auth',
+    'basic_auth',
+    'bearer_auth',
+    'oauth2_password_auth',
+    'simple_table_schema',
+    'valid_endpoint_config',
+    'minimal_pipeline_config',
+    'aiohttp_config',
+]

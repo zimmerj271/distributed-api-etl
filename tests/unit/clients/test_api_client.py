@@ -1,10 +1,11 @@
 import pytest
 
-from clients.http_client import ApiClient
-from clients.base import RequestExchange
-from transport.base import TransportResponse
-from tests.fixtures.transport import FakeTransportEngine
-from tests.fixtures.clients import basic_request_context
+from request_execution import (
+    RequestExecutor,
+    RequestExchange,
+    TransportResponse,
+)
+from tests.fixtures.request_execution import FakeTransportEngine, basic_request_context
 
 
 @pytest.mark.asyncio
@@ -17,7 +18,7 @@ async def test_api_client_success_response():
         )
     )
 
-    client = ApiClient(transport)
+    client = RequestExecutor(transport)
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -35,7 +36,7 @@ async def test_api_client_builds_transport_request_correctly():
         TransportResponse(status=200, headers=None, body=None)
     )
 
-    client = ApiClient(transport)
+    client = RequestExecutor(transport)
     ctx = basic_request_context()
 
     await client.send(ctx)
@@ -57,7 +58,7 @@ async def test_api_client_sets_success_false_on_500():
         TransportResponse(status=500, headers=None, body=None)
     )
 
-    client = ApiClient(transport)
+    client = RequestExecutor(transport)
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -77,7 +78,7 @@ async def test_api_client_transport_error():
         )
     )
 
-    client = ApiClient(transport)
+    client = RequestExecutor(transport)
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -96,7 +97,7 @@ async def test_api_client_runs_middleware():
         TransportResponse(status=200, headers=None, body=None)
     )
 
-    client = ApiClient(transport)
+    client = RequestExecutor(transport)
     client.add_middleware(mw)
 
     ctx = basic_request_context()
