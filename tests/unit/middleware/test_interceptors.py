@@ -185,7 +185,7 @@ class TestRetryMiddleware:
         assert "Non-retryable exception" in result.error_message
     
     @pytest.mark.asyncio
-    @patch("middleware.interceptors.asyncio.sleep", new_callable=AsyncMock)
+    @patch("request_execution.middleware.interceptors.asyncio.sleep", new_callable=AsyncMock)
     async def test_applies_exponential_backoff(self, mock_sleep):
         """
         GIVEN retry middleware with backoff settings
