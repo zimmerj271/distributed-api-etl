@@ -4,7 +4,7 @@ import pytest
 from request_execution.transport.engine import TransportEngineFactory, AiohttpEngine
 from request_execution.transport.base import TransportEngineType
 
-from fixtures.request_execution.transport import tcp_config_no_tls
+from tests.fixtures.request_execution.transport import tcp_config_no_tls
 
 
 @pytest.mark.unit

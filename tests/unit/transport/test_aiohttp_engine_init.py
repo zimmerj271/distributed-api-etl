@@ -9,8 +9,9 @@ from tests.fixtures.request_execution.transport import tcp_config_no_tls, tls_co
 @pytest.mark.transport
 class TestAiohttpEngineInitialization:
     """Tests for AiohttpEngine initialization"""
-    
-    def test_initializes_with_required_params(self):
+
+    @pytest.mark.asyncio
+    async def test_initializes_with_required_params(self):
         """
         GIVEN required initialization parameters
         WHEN AiohttpEngine is created
@@ -20,10 +21,13 @@ class TestAiohttpEngineInitialization:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._base_url == "https://example.com"
-        assert engine._connector is not None
-    
+
+        # _connector uses lazy init. Need to start async to evaluate
+        async with engine:
+            assert engine._connector is not None
+
     def test_strips_trailing_slash_from_base_url(self):
         """
         GIVEN base_url with trailing slash
@@ -34,9 +38,9 @@ class TestAiohttpEngineInitialization:
             base_url="https://example.com/",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._base_url == "https://example.com"
-    
+
     def test_preserves_base_url_without_trailing_slash(self):
         """
         GIVEN base_url without trailing slash
@@ -47,9 +51,9 @@ class TestAiohttpEngineInitialization:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._base_url == "https://example.com"
-    
+
     def test_handles_base_url_with_path(self):
         """
         GIVEN base_url with path and trailing slash
@@ -60,7 +64,7 @@ class TestAiohttpEngineInitialization:
             base_url="https://api.example.com/v2/",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._base_url == "https://api.example.com/v2"
 
 
@@ -68,60 +72,66 @@ class TestAiohttpEngineInitialization:
 @pytest.mark.transport
 class TestAiohttpEngineConnectorConfiguration:
     """Tests for TCP connector configuration"""
-    
-    def test_builds_tcp_connector(self):
+
+    @pytest.mark.asyncio
+    async def test_builds_tcp_connector(self):
         """
         GIVEN connector configuration
-        WHEN AiohttpEngine is created
+        WHEN AiohttpEngine context is entered
         THEN it should build TCPConnector
         """
         engine = AiohttpEngine(
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
-        assert isinstance(engine._connector, TCPConnector)
-    
-    def test_connector_respects_limit(self):
+
+        async with engine:
+            assert isinstance(engine._connector, TCPConnector)
+
+    @pytest.mark.asyncio
+    async def test_connector_respects_limit(self):
         """
         GIVEN connector config with connection limit
-        WHEN AiohttpEngine is created
+        WHEN AiohttpEngine context is entered
         THEN connector should have correct limit
         """
         from config.models.transport import TcpConnectionConfig
-        
+
         config = TcpConnectionConfig(limit=50)
-        
+
         engine = AiohttpEngine(
             base_url="https://example.com",
             connector_config=config,
         )
-        
-        assert engine._connector.limit == 50
-    
-    def test_connector_respects_limit_per_host(self):
+
+        async with engine:
+            assert engine._connector.limit == 50
+
+    @pytest.mark.asyncio
+    async def test_connector_respects_limit_per_host(self):
         """
         GIVEN connector config with per-host limit
-        WHEN AiohttpEngine is created
+        WHEN AiohttpEngine context is entered
         THEN connector should have correct per-host limit
         """
         from config.models.transport import TcpConnectionConfig
-        
+
         config = TcpConnectionConfig(limit=100, limit_per_host=10)
-        
+
         engine = AiohttpEngine(
             base_url="https://example.com",
             connector_config=config,
         )
-        
-        assert engine._connector.limit_per_host == 10
+
+        async with engine:
+            assert engine._connector.limit_per_host == 10
 
 
 @pytest.mark.unit
 @pytest.mark.transport
 class TestAiohttpEngineTimeoutConfiguration:
     """Tests for timeout configuration"""
-    
+
     def test_sets_base_timeout(self):
         """
         GIVEN base_timeout parameter
@@ -133,10 +143,10 @@ class TestAiohttpEngineTimeoutConfiguration:
             connector_config=tcp_config_no_tls(),
             base_timeout=45,
         )
-        
+
         assert isinstance(engine._timeout, ClientTimeout)
         assert engine._timeout.total == 45
-    
+
     def test_default_timeout_is_30_seconds(self):
         """
         GIVEN no timeout parameter
@@ -147,9 +157,9 @@ class TestAiohttpEngineTimeoutConfiguration:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._timeout.total == 30
-    
+
     def test_sets_warmup_timeout(self):
         """
         GIVEN warmup_timeout parameter
@@ -161,7 +171,7 @@ class TestAiohttpEngineTimeoutConfiguration:
             connector_config=tcp_config_no_tls(),
             warmup_timeout=5,
         )
-        
+
         assert engine._warmup_timeout.total == 5
 
 
@@ -169,7 +179,7 @@ class TestAiohttpEngineTimeoutConfiguration:
 @pytest.mark.transport
 class TestAiohttpEngineInitialState:
     """Tests for initial state after construction"""
-    
+
     def test_session_is_none_initially(self):
         """
         GIVEN newly created AiohttpEngine
@@ -180,9 +190,22 @@ class TestAiohttpEngineInitialState:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._session is None
-    
+
+    def test_connector_is_none_initially(self):
+        """
+        GIVEN newly created AiohttpEngine
+        WHEN not yet used as context manager
+        THEN connector should be None (lazy initialization)
+        """
+        engine = AiohttpEngine(
+            base_url="https://example.com",
+            connector_config=tcp_config_no_tls(),
+        )
+
+        assert engine._connector is None
+
     def test_warmup_state_is_false_initially(self):
         """
         GIVEN newly created AiohttpEngine
@@ -193,9 +216,9 @@ class TestAiohttpEngineInitialState:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._warmed_up is False
-    
+
     def test_warmup_error_is_none_initially(self):
         """
         GIVEN newly created AiohttpEngine
@@ -206,5 +229,5 @@ class TestAiohttpEngineInitialState:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         assert engine._warmup_error is None

@@ -11,27 +11,27 @@ from tests.fixtures.request_execution.transport import tcp_config_no_tls
 @pytest.mark.asyncio
 class TestSendErrorHandling:
     """Tests for error handling during send"""
-    
+
     async def test_send_without_session_raises(self):
         """
         GIVEN an AiohttpEngine without session
         WHEN send is called
-        THEN it should raise RuntimeError
+        THEN it should raise ValueError (session not assigned)
         """
         engine = AiohttpEngine(
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         req = TransportRequest(
             method="GET",
             url="test",
             headers={},
         )
-        
-        with pytest.raises(RuntimeError, match="async context manager"):
+
+        with pytest.raises(ValueError, match="ClientSession not assigned"):
             await engine.send(req)
-    
+
     async def test_send_catches_client_errors(self):
         """
         GIVEN a session that raises ClientError
@@ -42,26 +42,30 @@ class TestSendErrorHandling:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
-        # Mock session that raises
-        mock_session = AsyncMock()
-        mock_session.request = AsyncMock(side_effect=RuntimeError("Connection failed"))
-        
-        engine.session = mock_session
-        
+
+        # Create a mock context manager for the request
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("Connection failed"))
+        mock_cm.__aexit__ = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
+
+        engine._session = mock_session
+
         req = TransportRequest(
             method="GET",
             url="test",
             headers={},
         )
-        
+
         resp = await engine.send(req)
-        
+
         assert resp.status is None
         assert resp.error is not None
         assert "RuntimeError" in resp.error
-        assert "Connection failed" in resp.error
-    
+        assert "Connection Failed" in resp.error
+
     async def test_send_error_includes_exception_type(self):
         """
         GIVEN a request that raises an exception
@@ -69,29 +73,34 @@ class TestSendErrorHandling:
         THEN error should include exception type name
         """
         import aiohttp
-        
+
         engine = AiohttpEngine(
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
-        mock_session = AsyncMock()
-        mock_session.request = AsyncMock(
+
+        # Create a mock context manager for the request
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(
             side_effect=aiohttp.ClientConnectionError("Failed")
         )
-        
-        engine.session = mock_session
-        
+        mock_cm.__aexit__ = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
+
+        engine._session = mock_session
+
         req = TransportRequest(
             method="GET",
             url="test",
             headers={},
         )
-        
+
         resp = await engine.send(req)
-        
+
         assert "ClientConnectionError" in resp.error
-    
+
     async def test_send_error_has_empty_headers(self):
         """
         GIVEN a request that fails
@@ -102,20 +111,25 @@ class TestSendErrorHandling:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
-        mock_session = AsyncMock()
-        mock_session.request = AsyncMock(side_effect=RuntimeError("Boom"))
-        
-        engine.session = mock_session
-        
+
+        # Create a mock context manager for the request
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("Boom"))
+        mock_cm.__aexit__ = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
+
+        engine._session = mock_session
+
         req = TransportRequest(
             method="GET",
             url="test",
             headers={},
         )
-        
+
         resp = await engine.send(req)
-        
+
         assert resp.headers == {}
         assert resp.body is None
 
@@ -125,7 +139,7 @@ class TestSendErrorHandling:
 @pytest.mark.asyncio
 class TestSendSuccess:
     """Tests for successful send operations"""
-    
+
     async def test_send_returns_response_data(self):
         """
         GIVEN a successful request
@@ -136,33 +150,36 @@ class TestSendSuccess:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         # Mock successful response
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {"Content-Type": "application/json"}
         mock_response.read = AsyncMock(return_value=b'{"ok": true}')
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock()
-        
-        mock_session = AsyncMock()
-        mock_session.request = MagicMock(return_value=mock_response)
-        
-        engine.session = mock_session
-        
+
+        # Create a mock context manager for the request
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
+
+        engine._session = mock_session
+
         req = TransportRequest(
             method="GET",
             url="test",
             headers={},
         )
-        
+
         resp = await engine.send(req)
-        
+
         assert resp.status == 200
         assert resp.headers["Content-Type"] == "application/json"
         assert resp.body == b'{"ok": true}'
         assert resp.error is None
-    
+
     async def test_send_passes_request_parameters(self):
         """
         GIVEN a TransportRequest with all parameters
@@ -173,19 +190,22 @@ class TestSendSuccess:
             base_url="https://example.com",
             connector_config=tcp_config_no_tls(),
         )
-        
+
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {}
         mock_response.read = AsyncMock(return_value=b'')
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock()
-        
-        mock_session = AsyncMock()
-        mock_session.request = MagicMock(return_value=mock_response)
-        
-        engine.session = mock_session
-        
+
+        # Create a mock context manager for the request
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.request = MagicMock(return_value=mock_cm)
+
+        engine._session = mock_session
+
         req = TransportRequest(
             method="POST",
             url="/api/endpoint",
@@ -193,9 +213,9 @@ class TestSendSuccess:
             params={"q": "search"},
             json={"data": "payload"},
         )
-        
+
         await engine.send(req)
-        
+
         # Verify request was called with correct parameters
         call_args = mock_session.request.call_args
         assert call_args[0][0] == "POST"  # method
