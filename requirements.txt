@@ -7,3 +7,4 @@ requests==2.32.5
 pyspark==3.5.1
 delta-spark==3.2.0
 pytest-spark==0.6.0
+ipython==8.38.0
