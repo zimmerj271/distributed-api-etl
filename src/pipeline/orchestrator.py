@@ -22,7 +22,7 @@ from config.preprocessor import DatabricksSecretsPreprocessor, DatabricksUtils
 from config.factories import (
     TransportRuntimeFactory,
     EndpointRuntimeFactory,
-    MiddlewareRuntimeFactory
+    MiddlewareRuntimeFactory,
 )
 from auth.strategy import AuthRuntime, AuthStrategyFactory
 from pipeline.partition_executor import ApiPartitionExecutor
@@ -31,7 +31,6 @@ from pipeline.batch_processor import BatchProcessor
 
 
 class PipelineOrchestrator:
-
     def __init__(
         self,
         spark: SparkSession,
@@ -40,11 +39,13 @@ class PipelineOrchestrator:
         source_df: DataFrame | None = None,
     ) -> None:
         self._spark = spark
-        self._auth_config: AuthConfigModel = pipeline_configs.auth 
+        self._auth_config: AuthConfigModel = pipeline_configs.auth
         self._transport_config: TransportEngineModel = pipeline_configs.transport
-        self._middleware_configs: list[MiddlewareConfigModel] = pipeline_configs.middleware 
+        self._middleware_configs: list[MiddlewareConfigModel] = (
+            pipeline_configs.middleware
+        )
         self._endpoint_config: EndpointConfigModel = pipeline_configs.endpoint
-        self._tables_config: EtlTableConfig = pipeline_configs.tables 
+        self._tables_config: EtlTableConfig = pipeline_configs.tables
         self._execution_config: ExecutionConfig = pipeline_configs.execution
         self.source_df = source_df
         self.source_id = source_id
@@ -58,22 +59,19 @@ class PipelineOrchestrator:
 
         self._transport_factory: Callable[[], TransportEngine] = (
             TransportRuntimeFactory.build_factory(
-                cfg=self._transport_config, 
-                endpoint_cfg=self._endpoint_config
+                cfg=self._transport_config, endpoint_cfg=self._endpoint_config
             )
         )
 
         self._endpoint_factory: Callable[[], RequestContext] = (
             EndpointRuntimeFactory.build_factory(
                 cfg=self._endpoint_config,
-                mapping=self._tables_config.get_request_mapping()
+                mapping=self._tables_config.get_request_mapping(),
             )
         )
 
         self._middleware_factories: list[Callable[[], MIDDLEWARE_FUNC]] = (
-            MiddlewareRuntimeFactory.get_factories(
-                mw_cfgs=self._middleware_configs
-            )
+            MiddlewareRuntimeFactory.get_factories(mw_cfgs=self._middleware_configs)
         )
 
     @staticmethod
@@ -97,10 +95,10 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _discover_dbutils(spark: SparkSession) -> DatabricksUtils | None:
-
         # Notebook path
         try:
-            import IPython.core.getipython as gipy 
+            import IPython.core.getipython as gipy
+
             shell = gipy.get_ipython()
             if shell and "dbutils" in shell.user_ns:
                 return shell.user_ns["dbutils"]
@@ -111,6 +109,7 @@ class PipelineOrchestrator:
         # Job path / non-notebook path
         try:
             from pyspark.dbutils import DBUtils
+
             return DBUtils(spark)
 
         except Exception:
@@ -132,12 +131,8 @@ class PipelineOrchestrator:
         if PlatformDetector.is_databricks_env():
             dbutils = cls._discover_dbutils(spark)
             if dbutils is None:
-                raise RuntimeError(
-                    "Running on Databricks but dbutils was not found."
-                )
-            loader.add_preprocessor(
-                DatabricksSecretsPreprocessor(dbutils)
-            )
+                raise RuntimeError("Running on Databricks but dbutils was not found.")
+            loader.add_preprocessor(DatabricksSecretsPreprocessor(dbutils))
 
         pipeline_configs = loader.from_yaml(config_path)
 
@@ -178,18 +173,19 @@ class PipelineOrchestrator:
         )
 
     def _start_runtime_service(self) -> None:
-
         if isinstance(self._auth_strategy, AuthRuntime):
             self._logger.info("Starting driver-side authentication runtime service")
             self._auth_strategy.runtime_start(self._spark)
 
             self._logger.info("Adding authentication middleware")
             self._middleware_factories = (
-                self._middleware_factories + 
-                self._auth_strategy.get_middleware_factories()
+                self._middleware_factories
+                + self._auth_strategy.get_middleware_factories()
             )
         else:
-            self._logger.info("Authentication does not have a runtime service... skipping")
+            self._logger.info(
+                "Authentication does not have a runtime service... skipping"
+            )
 
     def run(self) -> None:
         configure_logging()
@@ -239,7 +235,7 @@ class PipelineOrchestrator:
         finally:
             if isinstance(self._auth_strategy, AuthRuntime):
                 self._auth_strategy.runtime_stop()
-            self._logger.info(f"Pipeline run finished")
+            self._logger.info("Pipeline run finished")
 
 
 def run_pipeline(
