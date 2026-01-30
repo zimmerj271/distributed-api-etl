@@ -32,8 +32,8 @@ class AiohttpEngine(TransportEngine):
         self._timeout = ClientTimeout(total=base_timeout)
         self._warmup_timeout = ClientTimeout(total=warmup_timeout)
 
-        self._connector = self._build_tcp_connector(self._connector_config)
-        self._session: ClientSession | None = None 
+        self._connector: TCPConnector | None = None
+        self._session: ClientSession | None = None
         self._warmup_error: str | None = None
         self._warmed_up: bool = False
 
@@ -75,9 +75,12 @@ class AiohttpEngine(TransportEngine):
 
         return TCPConnector(**kwargs)
 
-    async def __aenter__(self) -> Self: 
+    async def __aenter__(self) -> Self:
+        if self._connector is None:
+            self._connector = self._build_tcp_connector(self._connector_config)
+
         self.session = ClientSession(
-            connector=self._connector, 
+            connector=self._connector,
             timeout=self._timeout
         )
 
@@ -154,5 +157,3 @@ class HttpxEngine(TransportEngine):
 
     async def send(self, request: TransportRequest) -> TransportResponse:
         raise NotImplementedError("HttpxTransport has not been implemented")
-
-

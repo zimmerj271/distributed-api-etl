@@ -1,19 +1,20 @@
 import asyncio
 from types import TracebackType
-from typing import Callable, Any, TypeVar, Generic, Protocol, Self
+from typing import Callable, Any, TypeVar, Generic, Protocol
+from typing_extensions import Self
+
+from core.exceptions import MultipleCleanupFailures
 
 
 class AsyncProcess(Protocol):
-
     async def __aenter__(self) -> Self: ...
 
     async def __aexit__(
-        self, 
-        exc_type: BaseException | None, 
-        exc_val: BaseException | None, 
+        self,
+        exc_type: BaseException | None,
+        exc_val: BaseException | None,
         exc_tb: TracebackType | None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 T = TypeVar("T", bound=AsyncProcess)
@@ -85,11 +86,7 @@ class ProcessScope(Generic[T]):
         self._resources: dict[type, Any] = {}
         self._locks: dict[type, asyncio.Lock] = {}
 
-    async def get(
-        self,
-        key: type[T],
-        factory: Callable[[], T]
-    ) -> T:
+    async def get(self, key: type[T], factory: Callable[[], T]) -> T:
         if key in self._resources:
             return self._resources[key]
 
@@ -119,7 +116,7 @@ class ProcessScope(Generic[T]):
             if len(exceptions) == 1:
                 raise exceptions[0]
             else:
-                raise ExceptionGroup("Multiple cleanup failures", exceptions)
+                raise MultipleCleanupFailures(exceptions)
 
 
 class WorkerResourceManager:

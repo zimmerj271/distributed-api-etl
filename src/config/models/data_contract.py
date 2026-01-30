@@ -17,7 +17,8 @@ Desgin Decisions:
 3. Column mapping: Links source columns to endpoint parameters and sink columns
 """
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Literal, Self 
+from typing import Literal
+from typing_extensions import Self
 from enum import Enum
 
 from pyspark.sql import DataFrame
