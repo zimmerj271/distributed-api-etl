@@ -1,5 +1,5 @@
 import pytest
-from tests.fixtures.configs import minimal_pipeline_config
+from tests.fixtures.configs.pipeline import minimal_pipeline_config
 
 
 @pytest.mark.unit

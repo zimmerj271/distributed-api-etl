@@ -4,7 +4,7 @@ import yaml
 
 from config.loader import ConfigLoader
 from config.models.pipeline import PipelineConfig
-from tests.fixtures.configs import minimal_pipeline_config
+from tests.fixtures.configs.pipeline import minimal_pipeline_config
 
 
 @pytest.mark.unit
@@ -46,4 +46,3 @@ def test_read_source_prefers_file(tmp_path):
     text = loader._read_source(str(p))
 
     assert text == "foo: bar"
-

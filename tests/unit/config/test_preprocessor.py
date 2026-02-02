@@ -1,8 +1,8 @@
 import pytest
-from config import (
-    ConfigValue, 
-    DatabricksSecretsPreprocessor, 
-    DatabricksUtils, 
+from config.preprocessor import (
+    ConfigValue,
+    DatabricksSecretsPreprocessor,
+    DatabricksUtils,
     SecretsClient,
 )
 
@@ -13,7 +13,6 @@ class FakeSecrets(SecretsClient):
 
 
 class FakeDbutils(DatabricksUtils):
-
     def __init__(self) -> None:
         self.secrets = FakeSecrets()
 
@@ -33,11 +32,7 @@ def test_secret_replacement_scalar():
 def test_secret_replacement_nested():
     pre = DatabricksSecretsPreprocessor(FakeDbutils())
 
-    data: ConfigValue = {
-        "auth": {
-            "password": "{{secret.auth:pwd}}"
-        }
-    }
+    data: ConfigValue = {"auth": {"password": "{{secret.auth:pwd}}"}}
 
     result = pre.process(data)
 

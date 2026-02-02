@@ -1,4 +1,5 @@
 """Unit tests for interceptor middleware"""
+
 import pytest
 from pyspark.sql import Row
 from unittest.mock import patch, AsyncMock
@@ -9,14 +10,17 @@ from request_execution import (
     JsonResponseMiddleware,
     ParamInjectorMiddleware,
 )
-from tests.fixtures.request_execution import base_exchange, base_request_context
+from tests.fixtures.request_execution.middleware import (
+    base_exchange,
+    base_request_context,
+)
 
 
 @pytest.mark.unit
 @pytest.mark.middleware
 class TestRetryMiddleware:
     """Tests for retry middleware behavior"""
-    
+
     @pytest.mark.asyncio
     async def test_succeeds_on_first_attempt(self):
         """
@@ -37,7 +41,7 @@ class TestRetryMiddleware:
         assert result.success is True
         assert result.attempts == 1
         assert result.status_code == 200
-    
+
     @pytest.mark.asyncio
     async def test_retries_on_retryable_status_code(self):
         """
@@ -62,7 +66,7 @@ class TestRetryMiddleware:
         assert result.attempts == 3
         assert result.success is False
         assert result.metadata["retry_attempts"] == 3
-    
+
     @pytest.mark.asyncio
     async def test_succeeds_after_retries(self):
         """
@@ -90,7 +94,7 @@ class TestRetryMiddleware:
         assert result.success is True
         assert result.attempts == 2
         assert result.status_code == 200
-    
+
     @pytest.mark.asyncio
     async def test_does_not_retry_on_non_retryable_status(self):
         """
@@ -114,7 +118,7 @@ class TestRetryMiddleware:
         assert call_count == 1  # No retries
         assert result.attempts == 1
         assert result.status_code == 404
-    
+
     @pytest.mark.asyncio
     async def test_retries_on_retryable_exception(self):
         """
@@ -123,7 +127,7 @@ class TestRetryMiddleware:
         THEN it should retry
         """
         import aiohttp
-        
+
         mw = RetryMiddleware(max_attempts=3)
         attempt = 0
 
@@ -140,7 +144,7 @@ class TestRetryMiddleware:
 
         assert result.status_code == 200
         assert result.attempts == 2
-    
+
     @pytest.mark.asyncio
     async def test_exhausts_retries_on_persistent_exception(self):
         """
@@ -149,7 +153,7 @@ class TestRetryMiddleware:
         THEN it should exhaust retries and return error
         """
         import aiohttp
-        
+
         mw = RetryMiddleware(max_attempts=3)
 
         async def always_fails(req):
@@ -161,7 +165,7 @@ class TestRetryMiddleware:
         assert result.success is False
         assert result.attempts == 3
         assert "Retry attempts exhausted" in result.error_message
-    
+
     @pytest.mark.asyncio
     async def test_does_not_retry_non_retryable_exception(self):
         """
@@ -183,9 +187,12 @@ class TestRetryMiddleware:
         assert call_count == 1
         assert result.success is False
         assert "Non-retryable exception" in result.error_message
-    
+
     @pytest.mark.asyncio
-    @patch("request_execution.middleware.interceptors.asyncio.sleep", new_callable=AsyncMock)
+    @patch(
+        "request_execution.middleware.interceptors.asyncio.sleep",
+        new_callable=AsyncMock,
+    )
     async def test_applies_exponential_backoff(self, mock_sleep):
         """
         GIVEN retry middleware with backoff settings
@@ -209,7 +216,7 @@ class TestRetryMiddleware:
 @pytest.mark.middleware
 class TestJsonResponseMiddleware:
     """Tests for JSON response parsing middleware"""
-    
+
     @pytest.mark.asyncio
     async def test_parses_valid_json(self):
         """
@@ -230,7 +237,7 @@ class TestJsonResponseMiddleware:
         assert result.metadata["json"]["valid"] is True
         assert result.metadata["json"]["error"] is None
         assert result.body_text == '{"foo": "bar", "num": 42}'
-    
+
     @pytest.mark.asyncio
     async def test_handles_invalid_json(self):
         """
@@ -241,7 +248,7 @@ class TestJsonResponseMiddleware:
         mw = JsonResponseMiddleware()
 
         async def handler(req):
-            req.body = b'{bad json'
+            req.body = b"{bad json"
             req.status_code = 200
             return req
 
@@ -250,7 +257,7 @@ class TestJsonResponseMiddleware:
 
         assert result.metadata["json"]["valid"] is False
         assert result.metadata["json"]["error"] is not None
-    
+
     @pytest.mark.asyncio
     async def test_handles_empty_body(self):
         """
@@ -270,7 +277,7 @@ class TestJsonResponseMiddleware:
 
         # Should not crash
         assert "json" not in result.metadata or result.metadata.get("json") is None
-    
+
     @pytest.mark.asyncio
     async def test_sets_success_true_on_2xx_with_valid_json(self):
         """
@@ -289,7 +296,7 @@ class TestJsonResponseMiddleware:
         result = await mw(req, handler)
 
         assert result.success is True
-    
+
     @pytest.mark.asyncio
     async def test_converts_body_to_text(self):
         """
@@ -315,7 +322,7 @@ class TestJsonResponseMiddleware:
 @pytest.mark.middleware
 class TestParamInjectorMiddleware:
     """Tests for parameter injection middleware"""
-    
+
     @pytest.mark.asyncio
     async def test_injects_params_from_row(self):
         """
@@ -335,7 +342,7 @@ class TestParamInjectorMiddleware:
 
         assert result.context.params is not None
         assert result.context.params["patient_id"] == "P123"
-    
+
     @pytest.mark.asyncio
     async def test_injects_multiple_params(self):
         """
@@ -343,10 +350,9 @@ class TestParamInjectorMiddleware:
         WHEN request has row data
         THEN all params should be injected
         """
-        mw = ParamInjectorMiddleware({
-            "patient": "patient_id",
-            "encounter": "encounter_id"
-        })
+        mw = ParamInjectorMiddleware(
+            {"patient": "patient_id", "encounter": "encounter_id"}
+        )
 
         req = base_exchange()
         req.context._row = Row(patient_id="P123", encounter_id="E456")
@@ -358,7 +364,7 @@ class TestParamInjectorMiddleware:
 
         assert result.context.params["patient"] == "P123"
         assert result.context.params["encounter"] == "E456"
-    
+
     @pytest.mark.asyncio
     async def test_handles_missing_row(self):
         """
@@ -378,7 +384,7 @@ class TestParamInjectorMiddleware:
 
         # Should not crash, just pass through
         assert result is not None
-    
+
     @pytest.mark.asyncio
     async def test_clears_existing_params(self):
         """

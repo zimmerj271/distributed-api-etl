@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from auth.token.models import Token
@@ -29,21 +29,22 @@ class FailingTokenProvider(TokenProvider):
 def valid_token(ttl_seconds: int = 300) -> Token:
     return Token(
         token_value="abc123",
-        expires_at=datetime.now() + timedelta(seconds=ttl_seconds),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
     )
 
 
 def expired_token() -> Token:
     return Token(
         token_value="expired",
-        expires_at=datetime.now() - timedelta(seconds=10),
+        expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),
     )
+
 
 def almost_expired_token(seconds_until_expiry: int = 30) -> Token:
     """Token that expires soon - useful for testing refresh margin"""
     return Token(
         token_value="almost-expired",
-        expires_at=datetime.now() + timedelta(seconds=seconds_until_expiry),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=seconds_until_expiry),
     )
 
 
@@ -51,5 +52,5 @@ def token_with_custom_expiry(ttl_seconds: int) -> Token:
     """Token with custom TTL - useful for testing specific scenarios"""
     return Token(
         token_value=f"ttl-{ttl_seconds}",
-        expires_at=datetime.now() + timedelta(seconds=ttl_seconds),
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
     )

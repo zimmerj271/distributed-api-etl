@@ -1,5 +1,5 @@
 from types import TracebackType
-from typing import Self
+from typing_extensions import Self
 from core.runtime import AsyncProcess
 
 
@@ -13,10 +13,9 @@ class DummyAsyncResource(AsyncProcess):
         return self
 
     async def __aexit__(
-        self, 
-        exc_type: BaseException | None, 
-        exc: BaseException | None, 
-        exc_tb: TracebackType | None
+        self,
+        exc_type: BaseException | None,
+        exc: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         self.exited = True
-

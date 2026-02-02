@@ -198,29 +198,31 @@ class TestTokenManagerConcurrency:
         """
         GIVEN multiple concurrent requests when token is expired
         WHEN refresh is triggered
-        THEN only one refresh should occur
+        THEN only one refresh should occur due to lock serialization
         """
-        provider = ExpiringTokenProvider(expiry_seconds=0)
+        # Use a long-lived token so it doesn't expire during the test
+        provider = ExpiringTokenProvider(expiry_seconds=300)
 
         # Clear singleton state
         TokenManager._instances.clear()
-        manager = TokenManager(provider=provider, refresh_margin=0)
+        manager = TokenManager(provider=provider, refresh_margin=60)
 
         # Get initial token
-        await manager.get_token()
+        token1 = await manager.get_token()
         assert provider.call_count == 1
+        assert token1.token_value == "expiring-token-1"
 
-        # Wait for expiry
-        await asyncio.sleep(0.1)
+        # Invalidate the cached token to force a refresh on next call
+        manager.invalidate()
 
-        # Launch concurrent requests
+        # Launch concurrent requests - all need a new token, but lock should serialize
         tasks = [manager.get_token() for _ in range(10)]
         results = await asyncio.gather(*tasks)
 
         # All should get the same refreshed token
         assert all(r.token_value == "expiring-token-2" for r in results)
 
-        # Only one additional refresh
+        # Only one additional refresh (lock should serialize)
         assert provider.call_count == 2
 
 

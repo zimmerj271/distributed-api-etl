@@ -1,4 +1,4 @@
-from request_execution import RequestContext, RequestType
+from request_execution.models import RequestContext, RequestType
 
 
 def test_request_context_with_headers():
@@ -11,4 +11,3 @@ def test_request_context_with_headers():
     ctx = ctx.with_headers(ctx, {"B": "2"})
 
     assert ctx.headers == {"A": "1", "B": "2"}
-

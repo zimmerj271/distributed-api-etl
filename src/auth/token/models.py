@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass(frozen=True)
@@ -14,11 +14,11 @@ class Token:
         """
         if self.expires_at is None:
             return False
-        return datetime.now() >= self.expires_at
+        return datetime.now(timezone.utc) >= self.expires_at
 
     def seconds_until_expiration(self) -> float:
         if self.expires_at is not None:
-            return (self.expires_at - datetime.now()).total_seconds()
+            return (self.expires_at - datetime.now(timezone.utc)).total_seconds()
         return 0
 
     def will_expire_within(self, seconds: int) -> bool:
@@ -30,5 +30,4 @@ class Token:
         return {
             "token_value": self.token_value,
             "expires_at": self.expires_at.isoformat() if self.expires_at else "",
-        } 
-
+        }

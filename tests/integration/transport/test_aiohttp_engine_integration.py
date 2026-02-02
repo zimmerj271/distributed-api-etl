@@ -70,16 +70,17 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/get",
+                url=f"{base_url}/api/get",
                 headers={},
             )
 
@@ -98,16 +99,17 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
         async with engine:
             request = TransportRequest(
                 method="POST",
-                url="api/post",
+                url=f"{base_url}/api/post",
                 headers={"Content-Type": "application/json"},
                 json={"key": "value", "number": 42},
             )
@@ -127,16 +129,17 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/headers",
+                url=f"{base_url}/api/headers",
                 headers={
                     "X-Custom-Header": "custom-value",
                     "Authorization": "Bearer test-token",
@@ -158,16 +161,17 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/params",
+                url=f"{base_url}/api/params",
                 headers={},
                 params={"foo": "bar", "baz": "123"},
             )
@@ -187,9 +191,10 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -197,7 +202,7 @@ class TestAiohttpEngineHttpCommunication:
             for expected_status in [200, 201, 400, 404, 500, 503]:
                 request = TransportRequest(
                     method="GET",
-                    url=f"api/status/{expected_status}",
+                    url=f"{base_url}/api/status/{expected_status}",
                     headers={},
                 )
 
@@ -214,16 +219,17 @@ class TestAiohttpEngineHttpCommunication:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/large",
+                url=f"{base_url}/api/large",
                 headers={},
             )
 
@@ -271,9 +277,10 @@ class TestAiohttpEngineLifecycle:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -283,7 +290,7 @@ class TestAiohttpEngineLifecycle:
             for _ in range(5):
                 request = TransportRequest(
                     method="GET",
-                    url="api/get",
+                    url=f"{base_url}/api/get",
                     headers={},
                 )
                 await engine.send(request)
@@ -325,7 +332,7 @@ class TestAiohttpEngineErrorHandling:
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/test",
+                url="http://localhost:59999/api/test",
                 headers={},
             )
 
@@ -343,9 +350,10 @@ class TestAiohttpEngineErrorHandling:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
             base_timeout=1,  # 1 second timeout
         )
@@ -353,7 +361,7 @@ class TestAiohttpEngineErrorHandling:
         async with engine:
             request = TransportRequest(
                 method="GET",
-                url="api/slow",  # Takes 2 seconds
+                url=f"{base_url}/api/slow",  # Takes 2 seconds
                 headers={},
             )
 
@@ -401,9 +409,10 @@ class TestAiohttpEngineConnectionPooling:
 
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -412,7 +421,7 @@ class TestAiohttpEngineConnectionPooling:
             async def make_request(i):
                 request = TransportRequest(
                     method="GET",
-                    url=f"api/status/200",
+                    url=f"{base_url}/api/status/200",
                     headers={},
                     params={"request_id": str(i)},
                 )

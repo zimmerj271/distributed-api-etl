@@ -1,18 +1,22 @@
 """Unit tests for listener middleware"""
+
 import pytest
 from request_execution import (
     LoggingMiddleware,
     TimingMiddleware,
     WorkerIdentityMiddleware,
 )
-from tests.fixtures.request_execution import base_exchange, terminal_handler_ok
+from tests.fixtures.request_execution.middleware import (
+    base_exchange,
+    terminal_handler_ok,
+)
 
 
 @pytest.mark.unit
 @pytest.mark.middleware
 class TestLoggingMiddleware:
     """Tests for logging middleware"""
-    
+
     @pytest.mark.asyncio
     async def test_logs_outgoing_request(self):
         """
@@ -27,7 +31,7 @@ class TestLoggingMiddleware:
 
         logs = result.metadata["logs"]
         assert any("GET" in log and "->" in log for log in logs)
-    
+
     @pytest.mark.asyncio
     async def test_logs_incoming_response(self):
         """
@@ -42,7 +46,7 @@ class TestLoggingMiddleware:
 
         logs = result.metadata["logs"]
         assert any("200" in log and "<-" in log for log in logs)
-    
+
     @pytest.mark.asyncio
     async def test_logs_failure(self):
         """
@@ -63,7 +67,7 @@ class TestLoggingMiddleware:
 
         logs = result.metadata["logs"]
         assert any("FAILED" in log for log in logs)
-    
+
     @pytest.mark.asyncio
     async def test_preserves_existing_logs(self):
         """
@@ -86,7 +90,7 @@ class TestLoggingMiddleware:
 @pytest.mark.middleware
 class TestTimingMiddleware:
     """Tests for timing middleware"""
-    
+
     @pytest.mark.asyncio
     async def test_records_total_duration(self):
         """
@@ -102,7 +106,7 @@ class TestTimingMiddleware:
         assert "timing" in result.metadata
         assert "total_seconds" in result.metadata["timing"]
         assert result.metadata["timing"]["total_seconds"] >= 0.0
-    
+
     @pytest.mark.asyncio
     async def test_duration_is_reasonable(self):
         """
@@ -111,7 +115,7 @@ class TestTimingMiddleware:
         THEN duration should be small
         """
         import asyncio
-        
+
         mw = TimingMiddleware()
 
         async def fast_handler(req):
@@ -124,7 +128,7 @@ class TestTimingMiddleware:
 
         duration = result.metadata["timing"]["total_seconds"]
         assert 0 <= duration <= 0.1  # Should be around 10ms
-    
+
     @pytest.mark.asyncio
     async def test_preserves_existing_timing_metadata(self):
         """
@@ -146,7 +150,7 @@ class TestTimingMiddleware:
 @pytest.mark.middleware
 class TestWorkerIdentityMiddleware:
     """Tests for worker identity middleware"""
-    
+
     @pytest.mark.asyncio
     async def test_adds_worker_identity(self):
         """
@@ -161,11 +165,11 @@ class TestWorkerIdentityMiddleware:
 
         assert "executor_identity" in result.metadata
         identity = result.metadata["executor_identity"]
-        
+
         assert "hostname" in identity
         assert "pid" in identity
         assert "thread_id" in identity
-    
+
     @pytest.mark.asyncio
     async def test_identity_includes_executor_id(self):
         """
@@ -181,7 +185,7 @@ class TestWorkerIdentityMiddleware:
         identity = result.metadata["executor_identity"]
         # May be None if not running on Spark
         assert "executor_id" in identity
-    
+
     @pytest.mark.asyncio
     async def test_identity_is_consistent_across_calls(self):
         """

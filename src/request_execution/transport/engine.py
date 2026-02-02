@@ -1,12 +1,13 @@
 import ssl
 from types import TracebackType
-from typing import Self
+from typing_extensions import Self
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 
 from config.models.transport import TcpConnectionConfig, TlsConfig
 from request_execution.models import TransportRequest, TransportResponse
 from request_execution.transport.base import TransportEngineType, TransportEngine
 from core.abstract_factory import TypeAbstractFactory
+
 
 class TransportEngineFactory(TypeAbstractFactory[TransportEngineType, TransportEngine]):
     pass
@@ -48,9 +49,7 @@ class AiohttpEngine(TransportEngine):
         self._session = session
 
     def _build_ssl_context(self, cfg: TlsConfig) -> ssl.SSLContext | None:
-        context = ssl.create_default_context(
-            purpose=ssl.Purpose.SERVER_AUTH
-        )
+        context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
 
         if not cfg.verify:
             context.check_hostname = False
@@ -79,17 +78,14 @@ class AiohttpEngine(TransportEngine):
         if self._connector is None:
             self._connector = self._build_tcp_connector(self._connector_config)
 
-        self.session = ClientSession(
-            connector=self._connector,
-            timeout=self._timeout
-        )
+        self.session = ClientSession(connector=self._connector, timeout=self._timeout)
 
         return self
 
     async def __aexit__(
         self,
-        exc_type: BaseException | None, 
-        exc_val: BaseException | None, 
+        exc_type: BaseException | None,
+        exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
         if self.session and not self.session.closed:
@@ -100,7 +96,7 @@ class AiohttpEngine(TransportEngine):
         """
         Perform a lightweight connection warm-up against the base URL.
 
-        This primes DNS resolution, TCP connection establishment, TLS 
+        This primes DNS resolution, TCP connection establishment, TLS
         handshake, and initializes the connection pool.
         """
 
@@ -114,18 +110,21 @@ class AiohttpEngine(TransportEngine):
                 self._base_url,
                 timeout=self._warmup_timeout,
             ) as response:
-                await response.release()  # drain response body to ensure connection reuse
-            
+                await (
+                    response.release()
+                )  # drain response body to ensure connection reuse
+
             self._warmed_up = True
 
         except Exception as e:
             self._warmup_error = str(e)
             self._warmed_up = False
 
-
     async def send(self, request: TransportRequest) -> TransportResponse:
         if not self.session:
-            raise RuntimeError("AiohttpTransport must be used as an async context manager")
+            raise RuntimeError(
+                "AiohttpTransport must be used as an async context manager"
+            )
 
         try:
             async with self.session.request(
@@ -134,7 +133,7 @@ class AiohttpEngine(TransportEngine):
                 headers=request.headers,
                 params=request.params,
                 json=request.json,
-                data=request.data
+                data=request.data,
             ) as response:
                 body = await response.read()
                 return TransportResponse(
@@ -145,15 +144,11 @@ class AiohttpEngine(TransportEngine):
                 )
         except Exception as e:
             return TransportResponse(
-                status=None,
-                headers={},
-                body=None,
-                error=f"{type(e).__name__}: {e}"
+                status=None, headers={}, body=None, error=f"{type(e).__name__}: {e}"
             )
 
 
 @TransportEngineFactory.register(TransportEngineType.HTTPX)
 class HttpxEngine(TransportEngine):
-
     async def send(self, request: TransportRequest) -> TransportResponse:
         raise NotImplementedError("HttpxTransport has not been implemented")

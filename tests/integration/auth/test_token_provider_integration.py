@@ -8,6 +8,7 @@ from auth.token.models import Token
 from auth.token.token_provider import RpcTokenProvider, FallbackTokenProvider, StaticTokenProvider
 from auth.token.token_manager import TokenManager
 from auth.rpc.service import TokenRpcService
+from tests.fixtures.spark import FakeSparkSession
 
 
 @pytest.fixture
@@ -56,14 +57,15 @@ class TestRpcTokenProviderWithService:
         THEN the token should be returned correctly
         """
         token_manager = FakeTokenManager(token=valid_token)
-        rpc_service = TokenRpcService(token_manager=token_manager)
+        rpc_service = TokenRpcService(spark=FakeSparkSession(), token_manager=token_manager)
         app = rpc_service.build_app()
 
         client = await aiohttp_client(app)
 
         # Create RpcTokenProvider pointing to test server
+        # Note: RpcTokenProvider appends /token to the rpc_url, so we pass the base URL
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 
@@ -80,13 +82,13 @@ class TestRpcTokenProviderWithService:
         THEN each fetch should call the service (no caching at provider level)
         """
         token_manager = FakeTokenManager(token=valid_token)
-        rpc_service = TokenRpcService(token_manager=token_manager)
+        rpc_service = TokenRpcService(spark=FakeSparkSession(), token_manager=token_manager)
         app = rpc_service.build_app()
 
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 
@@ -104,13 +106,13 @@ class TestRpcTokenProviderWithService:
         THEN an exception should be raised after retries
         """
         token_manager = FakeTokenManager(should_fail=True)
-        rpc_service = TokenRpcService(token_manager=token_manager)
+        rpc_service = TokenRpcService(spark=FakeSparkSession(), token_manager=token_manager)
         app = rpc_service.build_app()
 
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
             max_retries=2,
             base_delay=0.01,
@@ -143,7 +145,7 @@ class TestRpcTokenProviderWithService:
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
             max_retries=5,
             base_delay=0.01,
@@ -168,28 +170,26 @@ class TestFallbackTokenProvider:
         THEN the primary provider should be used
         """
         token_manager = FakeTokenManager(token=valid_token)
-        rpc_service = TokenRpcService(token_manager=token_manager)
+        rpc_service = TokenRpcService(spark=FakeSparkSession(), token_manager=token_manager)
         app = rpc_service.build_app()
 
         client = await aiohttp_client(app)
 
         primary = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 
-        fallback_token = Token(
-            token_value="fallback-token",
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        )
-        fallback = StaticTokenProvider(fallback_token)
+        fallback = StaticTokenProvider("fallback-token")
 
         provider = FallbackTokenProvider(primary=primary, fallback=fallback)
 
         token = await provider.get_token()
 
         assert token.token_value == "test-token-value"
-        assert provider.used_fallback is False
+        # Verify primary was used via telemetry
+        telemetry = provider.token_telemetry()
+        assert telemetry["provider"] == "RpcTokenProvider"
 
     async def test_uses_fallback_when_primary_fails(self):
         """
@@ -205,18 +205,16 @@ class TestFallbackTokenProvider:
             base_delay=0.01,
         )
 
-        fallback_token = Token(
-            token_value="fallback-token",
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        )
-        fallback = StaticTokenProvider(fallback_token)
+        fallback = StaticTokenProvider("fallback-token")
 
         provider = FallbackTokenProvider(primary=primary, fallback=fallback)
 
         token = await provider.get_token()
 
         assert token.token_value == "fallback-token"
-        assert provider.used_fallback is True
+        # Verify fallback was used via telemetry
+        telemetry = provider.token_telemetry()
+        assert telemetry["provider"] == "StaticTokenProvider"
 
 
 @pytest.mark.integration
@@ -227,37 +225,30 @@ class TestStaticTokenProvider:
 
     async def test_returns_static_token(self):
         """
-        GIVEN a StaticTokenProvider with a token
+        GIVEN a StaticTokenProvider with a token string
         WHEN get_token is called
-        THEN the same token should be returned
+        THEN a token with that value should be returned
         """
-        token = Token(
-            token_value="static-token-123",
-            expires_at=None,  # Never expires
-        )
-        provider = StaticTokenProvider(token)
+        provider = StaticTokenProvider("static-token-123")
 
         result = await provider.get_token()
 
         assert result.token_value == "static-token-123"
-        assert result.expires_at is None
+        assert result.expires_at == datetime.max.replace(tzinfo=timezone.utc)
 
     async def test_returns_same_token_on_multiple_calls(self):
         """
         GIVEN a StaticTokenProvider
         WHEN get_token is called multiple times
-        THEN the same token instance should be returned
+        THEN tokens with the same value should be returned
         """
-        token = Token(
-            token_value="static-token",
-            expires_at=None,
-        )
-        provider = StaticTokenProvider(token)
+        provider = StaticTokenProvider("static-token")
 
         results = [await provider.get_token() for _ in range(5)]
 
-        # All should be the same instance
-        assert all(r is token for r in results)
+        # All should have the same token value
+        assert all(r.token_value == "static-token" for r in results)
+        assert all(r.expires_at == datetime.max.replace(tzinfo=timezone.utc) for r in results)
 
 
 @pytest.mark.integration
@@ -288,7 +279,7 @@ class TestTokenProviderWithRealTokenManager:
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 
@@ -327,7 +318,7 @@ class TestTokenProviderWithRealTokenManager:
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 
@@ -369,7 +360,7 @@ class TestTokenProviderWithRealTokenManager:
         client = await aiohttp_client(app)
 
         provider = RpcTokenProvider(
-            rpc_url=str(client.make_url("/token")),
+            rpc_url=str(client.make_url("")),
             timeout=5.0,
         )
 

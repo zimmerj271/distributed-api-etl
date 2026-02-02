@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any, Mapping
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from requests import RequestException, HTTPError
 
 from utils.common import async_exponential_backoff
@@ -99,7 +99,7 @@ class PasswordGrantTokenProvider(TokenProvider):
                     payload: dict[str, Any] = response.json()
                     access_token = payload["access_token"]
                     expires_in = int(payload.get("expires_in", self._default_expiration))
-                    expires_at = datetime.now() + timedelta(seconds=expires_in)
+                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                     self._logger.info("[TokenProvider] Successfully retrieved token from the vendor.")
                     return Token(token_value=access_token, expires_at=expires_at)
                 except RuntimeError as re:
@@ -196,7 +196,7 @@ class StaticTokenProvider(TokenProvider):
     async def get_token(self) -> Token:
         return Token(
             token_value=self._token,
-            expires_at=datetime.max
+            expires_at=datetime.max.replace(tzinfo=timezone.utc)
         )
 
     def token_telemetry(self) -> dict[str, Any]:

@@ -1,7 +1,8 @@
 """Unit tests for middleware pipeline execution"""
+
 import pytest
 from request_execution import MiddlewarePipeline, MIDDLEWARE_FUNC
-from tests.fixtures.request_execution import (
+from tests.fixtures.request_execution.middleware import (
     base_exchange,
     terminal_handler_ok,
     terminal_handler_fail,
@@ -12,7 +13,7 @@ from tests.fixtures.request_execution import (
 @pytest.mark.middleware
 class TestMiddlewarePipelineExecution:
     """Tests for middleware pipeline execution order and flow"""
-    
+
     @pytest.mark.asyncio
     async def test_executes_middleware_in_order(self):
         """
@@ -29,7 +30,7 @@ class TestMiddlewarePipelineExecution:
         async def mw2(req, next_call):
             calls.append("mw2")
             return await next_call(req)
-        
+
         async def mw3(req, next_call):
             calls.append("mw3")
             return await next_call(req)
@@ -42,7 +43,7 @@ class TestMiddlewarePipelineExecution:
         await pipeline.execute(base_exchange(), terminal_handler_ok)
 
         assert calls == ["mw1", "mw2", "mw3"]
-    
+
     @pytest.mark.asyncio
     async def test_reaches_terminal_handler(self):
         """
@@ -54,7 +55,7 @@ class TestMiddlewarePipelineExecution:
         result = await pipeline.execute(base_exchange(), terminal_handler_ok)
 
         assert result.status_code == 200
-    
+
     @pytest.mark.asyncio
     async def test_empty_pipeline_calls_terminal_directly(self):
         """
@@ -63,9 +64,9 @@ class TestMiddlewarePipelineExecution:
         THEN it should call terminal handler directly
         """
         pipeline = MiddlewarePipeline()
-        
+
         result = await pipeline.execute(base_exchange(), terminal_handler_ok)
-        
+
         assert result.status_code == 200
 
 
@@ -73,7 +74,7 @@ class TestMiddlewarePipelineExecution:
 @pytest.mark.middleware
 class TestMiddlewarePipelineDataFlow:
     """Tests for data flow through middleware pipeline"""
-    
+
     @pytest.mark.asyncio
     async def test_middleware_can_modify_request(self):
         """
@@ -81,6 +82,7 @@ class TestMiddlewarePipelineDataFlow:
         WHEN execute is called
         THEN modifications should propagate through pipeline
         """
+
         async def add_header(req, next_call):
             req.context.headers["X-Custom"] = "value"
             return await next_call(req)
@@ -91,7 +93,7 @@ class TestMiddlewarePipelineDataFlow:
         result = await pipeline.execute(base_exchange(), terminal_handler_ok)
 
         assert result.context.headers["X-Custom"] == "value"
-    
+
     @pytest.mark.asyncio
     async def test_middleware_can_modify_response(self):
         """
@@ -99,6 +101,7 @@ class TestMiddlewarePipelineDataFlow:
         WHEN execute is called
         THEN modifications should be in final result
         """
+
         async def add_metadata(req, next_call):
             result = await next_call(req)
             result.metadata["processed"] = True
@@ -110,7 +113,7 @@ class TestMiddlewarePipelineDataFlow:
         result = await pipeline.execute(base_exchange(), terminal_handler_ok)
 
         assert result.metadata["processed"] is True
-    
+
     @pytest.mark.asyncio
     async def test_multiple_middleware_can_modify_same_data(self):
         """
@@ -118,6 +121,7 @@ class TestMiddlewarePipelineDataFlow:
         WHEN execute is called
         THEN all modifications should be applied in order
         """
+
         async def mw1(req, next_call):
             req.context.headers["Counter"] = "1"
             return await next_call(req)
@@ -140,7 +144,7 @@ class TestMiddlewarePipelineDataFlow:
 @pytest.mark.middleware
 class TestMiddlewarePipelineShortCircuit:
     """Tests for middleware short-circuit behavior"""
-    
+
     @pytest.mark.asyncio
     async def test_middleware_can_short_circuit(self):
         """
@@ -169,7 +173,7 @@ class TestMiddlewarePipelineShortCircuit:
         assert calls == ["short_circuit"]
         assert result.status_code == 403
         assert result.success is False
-    
+
     @pytest.mark.asyncio
     async def test_short_circuit_prevents_terminal_handler(self):
         """
@@ -199,7 +203,7 @@ class TestMiddlewarePipelineShortCircuit:
 @pytest.mark.middleware
 class TestMiddlewarePipelineNesting:
     """Tests for middleware nesting (wrap model)"""
-    
+
     @pytest.mark.asyncio
     async def test_middleware_wraps_downstream(self):
         """
@@ -221,7 +225,7 @@ class TestMiddlewarePipelineNesting:
         await pipeline.execute(base_exchange(), terminal_handler_ok)
 
         assert order == ["before", "after"]
-    
+
     @pytest.mark.asyncio
     async def test_nested_middleware_execution_order(self):
         """
@@ -258,7 +262,7 @@ class TestMiddlewarePipelineNesting:
             "inner_before",
             "terminal",
             "inner_after",
-            "outer_after"
+            "outer_after",
         ]
 
 
@@ -266,7 +270,7 @@ class TestMiddlewarePipelineNesting:
 @pytest.mark.middleware
 class TestMiddlewarePipelineErrorHandling:
     """Tests for error handling in middleware pipeline"""
-    
+
     @pytest.mark.asyncio
     async def test_middleware_exception_propagates(self):
         """
@@ -274,6 +278,7 @@ class TestMiddlewarePipelineErrorHandling:
         WHEN execute is called
         THEN the exception should propagate
         """
+
         async def failing_middleware(req, next_call):
             raise ValueError("Middleware failed")
 
@@ -282,7 +287,7 @@ class TestMiddlewarePipelineErrorHandling:
 
         with pytest.raises(ValueError, match="Middleware failed"):
             await pipeline.execute(base_exchange(), terminal_handler_ok)
-    
+
     @pytest.mark.asyncio
     async def test_terminal_handler_exception_propagates(self):
         """
@@ -290,6 +295,7 @@ class TestMiddlewarePipelineErrorHandling:
         WHEN execute is called
         THEN the exception should propagate through middleware
         """
+
         async def failing_terminal(req):
             raise RuntimeError("Terminal failed")
 
@@ -297,7 +303,7 @@ class TestMiddlewarePipelineErrorHandling:
 
         with pytest.raises(RuntimeError, match="Terminal failed"):
             await pipeline.execute(base_exchange(), failing_terminal)
-    
+
     @pytest.mark.asyncio
     async def test_middleware_can_catch_downstream_exceptions(self):
         """
@@ -305,6 +311,7 @@ class TestMiddlewarePipelineErrorHandling:
         WHEN downstream raises
         THEN middleware can handle it gracefully
         """
+
         async def error_handler(req, next_call):
             try:
                 return await next_call(req)
@@ -329,13 +336,14 @@ class TestMiddlewarePipelineErrorHandling:
 @pytest.mark.middleware
 class TestMiddlewarePipelineAddition:
     """Tests for adding middleware to pipeline"""
-    
+
     def test_add_middleware_to_pipeline(self):
         """
         GIVEN a middleware pipeline
         WHEN add is called
         THEN middleware should be registered
         """
+
         async def dummy_mw(req, next_call):
             return await next_call(req)
 
@@ -344,13 +352,14 @@ class TestMiddlewarePipelineAddition:
 
         assert len(pipeline._middleware_list) == 1
         assert pipeline._middleware_list[0] is dummy_mw
-    
+
     def test_add_multiple_middleware(self):
         """
         GIVEN a middleware pipeline
         WHEN add is called multiple times
         THEN all middleware should be registered in order
         """
+
         async def mw1(req, next_call):
             return await next_call(req)
 

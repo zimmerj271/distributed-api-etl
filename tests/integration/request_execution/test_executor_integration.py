@@ -88,9 +88,10 @@ class TestRequestExecutorBasicFlow:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -99,7 +100,7 @@ class TestRequestExecutorBasicFlow:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
                 params={"id": "test-123"},
             )
 
@@ -117,9 +118,10 @@ class TestRequestExecutorBasicFlow:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -128,7 +130,7 @@ class TestRequestExecutorBasicFlow:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/error",
+                url=f"{base_url}/api/error",
             )
 
             exchange = await executor.send(context)
@@ -145,9 +147,10 @@ class TestRequestExecutorBasicFlow:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -156,7 +159,7 @@ class TestRequestExecutorBasicFlow:
 
             context = RequestContext(
                 method=RequestType.POST,
-                url="/api/echo",
+                url=f"{base_url}/api/echo",
                 headers={"Content-Type": "application/json"},
                 json={"data": "test-value", "count": 42},
             )
@@ -183,9 +186,10 @@ class TestRequestExecutorWithMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -195,7 +199,7 @@ class TestRequestExecutorWithMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -212,9 +216,10 @@ class TestRequestExecutorWithMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -224,7 +229,7 @@ class TestRequestExecutorWithMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -241,9 +246,10 @@ class TestRequestExecutorWithMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -253,7 +259,7 @@ class TestRequestExecutorWithMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -273,9 +279,10 @@ class TestRequestExecutorWithMiddleware:
         app = create_test_app()
         app["flaky_count"] = 0  # Reset counter
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -291,7 +298,7 @@ class TestRequestExecutorWithMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/flaky",
+                url=f"{base_url}/api/flaky",
             )
 
             exchange = await executor.send(context)
@@ -309,9 +316,10 @@ class TestRequestExecutorWithMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -324,7 +332,7 @@ class TestRequestExecutorWithMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -348,9 +356,10 @@ class TestRequestExecutorContextHandling:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -359,7 +368,7 @@ class TestRequestExecutorContextHandling:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/echo",
+                url=f"{base_url}/api/echo",
                 headers={
                     "X-Custom-Header": "test-value",
                     "X-Request-Id": "req-123",
@@ -380,9 +389,10 @@ class TestRequestExecutorContextHandling:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -391,7 +401,7 @@ class TestRequestExecutorContextHandling:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/echo",
+                url=f"{base_url}/api/echo",
                 params={"foo": "bar", "count": "10"},
             )
 
@@ -403,16 +413,16 @@ class TestRequestExecutorContextHandling:
 
     async def test_url_path_handling(self, aiohttp_client, tcp_config):
         """
-        GIVEN a RequestContext with a URL path
+        GIVEN a RequestContext with a full URL
         WHEN the request is executed
-        THEN the path should be correctly formed with base URL
+        THEN the path should be correctly used
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
-        # Base URL with trailing slash handling
         engine = AiohttpEngine(
-            base_url=str(client.make_url("/")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -421,7 +431,7 @@ class TestRequestExecutorContextHandling:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/echo",
+                url=f"{base_url}/api/echo",
             )
 
             exchange = await executor.send(context)
@@ -443,9 +453,10 @@ class TestRequestExecutorRowConversion:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -454,9 +465,10 @@ class TestRequestExecutorRowConversion:
             executor.add_middleware(JsonResponseMiddleware())
             executor.add_middleware(TimingMiddleware())
 
+            full_url = f"{base_url}/api/success"
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=full_url,
                 params={"id": "test-123"},
             )
 
@@ -467,7 +479,7 @@ class TestRequestExecutorRowConversion:
 
             # Verify row fields
             assert row["request_id"] == "test-123"
-            assert row["url"] == "/api/success"
+            assert row["url"] == full_url
             assert row["method"] == "GET"
             assert row["status_code"] == 200
             assert row["success"] is True

@@ -103,9 +103,10 @@ class TestMiddlewareChainOrder:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -130,7 +131,7 @@ class TestMiddlewareChainOrder:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             await executor.send(context)
@@ -161,9 +162,10 @@ class TestRetryWithOtherMiddleware:
         app = create_test_app()
         app["request_count"] = 0
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -188,7 +190,7 @@ class TestRetryWithOtherMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/flaky",
+                url=f"{base_url}/api/flaky",
                 params={"fail_count": "2"},  # Fail twice
             )
 
@@ -208,9 +210,10 @@ class TestRetryWithOtherMiddleware:
         app = create_test_app()
         app["request_count"] = 0
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -227,7 +230,7 @@ class TestRetryWithOtherMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/flaky",
+                url=f"{base_url}/api/flaky",
                 params={"fail_count": "2"},
             )
 
@@ -252,9 +255,10 @@ class TestAuthMiddlewareIntegration:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -264,7 +268,7 @@ class TestAuthMiddlewareIntegration:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/protected",
+                url=f"{base_url}/api/protected",
             )
 
             exchange = await executor.send(context)
@@ -279,9 +283,8 @@ class TestAuthMiddlewareIntegration:
         WHEN retries occur
         THEN auth should be applied on each retry
         """
-        app = create_test_app()
+        app = web.Application()
         app["request_count"] = 0
-        client = await aiohttp_client(app)
 
         # Custom endpoint that requires auth AND is flaky
         async def handle_flaky_protected(request):
@@ -294,11 +297,12 @@ class TestAuthMiddlewareIntegration:
                 return web.json_response({"error": "temporary"}, status=503)
             return web.json_response({"status": "ok"})
 
-        app._router.add_route("GET", "/api/flaky-protected", handle_flaky_protected)
+        app.router.add_get("/api/flaky-protected", handle_flaky_protected)
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -316,7 +320,7 @@ class TestAuthMiddlewareIntegration:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/flaky-protected",
+                url=f"{base_url}/api/flaky-protected",
             )
 
             exchange = await executor.send(context)
@@ -339,9 +343,10 @@ class TestParamInjectorMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -353,7 +358,7 @@ class TestParamInjectorMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/echo",
+                url=f"{base_url}/api/echo",
             )
             # Simulate a Spark row
             context._row = Row(pid="P123", enc="E456", other="ignored")
@@ -380,9 +385,10 @@ class TestTimingMiddlewareAccuracy:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -392,7 +398,7 @@ class TestTimingMiddlewareAccuracy:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/slow",
+                url=f"{base_url}/api/slow",
                 params={"delay": "0.2"},  # 200ms delay
             )
 
@@ -421,9 +427,10 @@ class TestWorkerIdentityMiddleware:
         """
         app = create_test_app()
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -433,7 +440,7 @@ class TestWorkerIdentityMiddleware:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -461,9 +468,10 @@ class TestFullMiddlewareStack:
         app = create_test_app()
         app["request_count"] = 0
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -485,7 +493,7 @@ class TestFullMiddlewareStack:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/success",
+                url=f"{base_url}/api/success",
             )
 
             exchange = await executor.send(context)
@@ -519,9 +527,10 @@ class TestFullMiddlewareStack:
         app = create_test_app()
         app["request_count"] = 0
         client = await aiohttp_client(app)
+        base_url = str(client.make_url(""))
 
         engine = AiohttpEngine(
-            base_url=str(client.make_url("")),
+            base_url=base_url,
             connector_config=tcp_config,
         )
 
@@ -541,7 +550,7 @@ class TestFullMiddlewareStack:
 
             context = RequestContext(
                 method=RequestType.GET,
-                url="/api/flaky",
+                url=f"{base_url}/api/flaky",
                 params={"fail_count": "2"},
             )
 

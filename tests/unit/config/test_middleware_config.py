@@ -1,5 +1,5 @@
 import pytest
-from config import RetryMiddlewareModel
+from config.models.middleware import RetryMiddlewareModel
 
 
 @pytest.mark.unit
@@ -10,4 +10,3 @@ def test_retry_middleware_runtime_args():
     args = cfg.to_runtime_args()
     assert args["max_attempts"] == 3
     assert 500 in args["retry_status_codes"]
-

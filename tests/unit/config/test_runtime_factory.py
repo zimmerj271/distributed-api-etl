@@ -1,10 +1,7 @@
 import pytest
 from unittest.mock import patch
-from config import (
-    RetryMiddlewareModel,
-    TransportRuntimeFactory,
-    MiddlewareRuntimeFactory
-)
+from config.models.middleware import RetryMiddlewareModel
+from config.factories import MiddlewareRuntimeFactory, TransportRuntimeFactory
 
 
 @pytest.mark.unit
@@ -26,7 +23,6 @@ def test_transport_factory_invocation(
     valid_endpoint_config,
     aiohttp_config,
 ):
-
     factory = TransportRuntimeFactory.build_factory(
         aiohttp_config,
         valid_endpoint_config,
@@ -46,10 +42,7 @@ def test_transport_factory_invocation(
 @pytest.mark.config
 @patch("config.factories.MiddlewareFactory.create")
 def test_middleware_factory(mock_create):
-    retry_config = RetryMiddlewareModel(
-        type="retry",
-        max_attempts=3
-    )
+    retry_config = RetryMiddlewareModel(type="retry", max_attempts=3)
     mock_create.return_value = lambda req, ctx: req
 
     factory = MiddlewareRuntimeFactory.build_factory(retry_config)
@@ -66,9 +59,7 @@ def test_middleware_factory(mock_create):
 @pytest.mark.unit
 @pytest.mark.config
 def test_get_factories_returns_factories():
-    middleware_cfgs = [
-        RetryMiddlewareModel(type="retry", max_attempts=3)
-    ]
+    middleware_cfgs = [RetryMiddlewareModel(type="retry", max_attempts=3)]
 
     factories = MiddlewareRuntimeFactory.get_factories(middleware_cfgs)
 

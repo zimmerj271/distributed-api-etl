@@ -1,4 +1,5 @@
 """Unit tests for transport send error handling"""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from request_execution.transport.engine import AiohttpEngine
@@ -64,7 +65,7 @@ class TestSendErrorHandling:
         assert resp.status is None
         assert resp.error is not None
         assert "RuntimeError" in resp.error
-        assert "Connection Failed" in resp.error
+        assert "Connection failed" in resp.error
 
     async def test_send_error_includes_exception_type(self):
         """
@@ -194,7 +195,7 @@ class TestSendSuccess:
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.headers = {}
-        mock_response.read = AsyncMock(return_value=b'')
+        mock_response.read = AsyncMock(return_value=b"")
 
         # Create a mock context manager for the request
         mock_cm = AsyncMock()

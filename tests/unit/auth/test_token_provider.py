@@ -1,6 +1,7 @@
 """Unit tests for token provider implementations"""
+
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock, AsyncMock
 from requests import RequestException, HTTPError
 
@@ -11,7 +12,7 @@ from auth.token.token_provider import (
     PasswordGrantTokenProvider,
     FallbackTokenProvider,
 )
-from tests.fixtures.auth import (
+from tests.fixtures.auth.auth_token import (
     FakeTokenProvider,
     FailingTokenProvider,
     valid_token,
@@ -22,7 +23,7 @@ from tests.fixtures.auth import (
 @pytest.mark.auth
 class TestToken:
     """Tests for Token data class"""
-    
+
     def test_token_creation_with_expiry(self):
         """
         GIVEN token value and expiration datetime
@@ -31,10 +32,10 @@ class TestToken:
         """
         expires = datetime(2025, 1, 1, 12, 0, 0)
         token = Token("test-token", expires_at=expires)
-        
+
         assert token.token_value == "test-token"
         assert token.expires_at == expires
-    
+
     def test_token_creation_without_expiry(self):
         """
         GIVEN only a token value
@@ -42,10 +43,10 @@ class TestToken:
         THEN expires_at should be None
         """
         token = Token("test-token", expires_at=None)
-        
+
         assert token.token_value == "test-token"
         assert token.expires_at is None
-    
+
     def test_token_is_not_expired_without_expiry(self):
         """
         GIVEN a token with no expiration
@@ -54,7 +55,7 @@ class TestToken:
         """
         token = Token("x", None)
         assert token.is_expired is False
-    
+
     def test_token_is_expired_when_past_expiry(self):
         """
         GIVEN a token that expired in the past
@@ -63,10 +64,10 @@ class TestToken:
         """
         token = Token(
             "x",
-            expires_at=datetime.now() - timedelta(seconds=10),
+            expires_at=datetime.now(timezone.utc) - timedelta(seconds=10),
         )
         assert token.is_expired is True
-    
+
     def test_token_is_not_expired_when_future_expiry(self):
         """
         GIVEN a token that expires in the future
@@ -75,10 +76,10 @@ class TestToken:
         """
         token = Token(
             "x",
-            expires_at=datetime.now() + timedelta(seconds=300),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=300),
         )
         assert token.is_expired is False
-    
+
     def test_token_will_expire_within_margin(self):
         """
         GIVEN a token expiring in 30 seconds
@@ -87,10 +88,10 @@ class TestToken:
         """
         token = Token(
             "x",
-            expires_at=datetime.now() + timedelta(seconds=30),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
         )
         assert token.will_expire_within(60) is True
-    
+
     def test_token_will_not_expire_outside_margin(self):
         """
         GIVEN a token expiring in 120 seconds
@@ -99,10 +100,10 @@ class TestToken:
         """
         token = Token(
             "x",
-            expires_at=datetime.now() + timedelta(seconds=120),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=120),
         )
         assert token.will_expire_within(60) is False
-    
+
     def test_token_will_not_expire_without_expiry(self):
         """
         GIVEN a token with no expiration
@@ -111,21 +112,21 @@ class TestToken:
         """
         token = Token("x", expires_at=None)
         assert token.will_expire_within(60) is False
-    
+
     def test_token_seconds_until_expiration(self):
         """
         GIVEN a token expiring in the future
         WHEN seconds_until_expiration is called
         THEN it should return approximate seconds remaining
         """
-        future = datetime.now() + timedelta(seconds=100)
+        future = datetime.now(timezone.utc) + timedelta(seconds=100)
         token = Token("x", expires_at=future)
-        
+
         seconds = token.seconds_until_expiration()
-        
+
         # Allow some margin for test execution time
         assert 95 <= seconds <= 105
-    
+
     def test_token_serialization_with_expiry(self):
         """
         GIVEN a token with expiration
@@ -137,11 +138,11 @@ class TestToken:
             expires_at=datetime(2025, 1, 1, 12, 0, 0),
         )
         payload = token.serialize_token()
-        
+
         assert payload["token_value"] == "abc"
         assert payload["expires_at"].startswith("2025")
         assert "T" in payload["expires_at"]  # ISO format
-    
+
     def test_token_serialization_without_expiry(self):
         """
         GIVEN a token without expiration
@@ -150,7 +151,7 @@ class TestToken:
         """
         token = Token("abc", expires_at=None)
         payload = token.serialize_token()
-        
+
         assert payload["token_value"] == "abc"
         assert payload["expires_at"] == ""
 
@@ -159,7 +160,7 @@ class TestToken:
 @pytest.mark.auth
 class TestStaticTokenProvider:
     """Tests for static token provider"""
-    
+
     @pytest.mark.asyncio
     async def test_returns_provided_token(self):
         """
@@ -171,7 +172,7 @@ class TestStaticTokenProvider:
         token = await provider.get_token()
 
         assert token.token_value == "static-token"
-    
+
     @pytest.mark.asyncio
     async def test_token_never_expires(self):
         """
@@ -185,7 +186,7 @@ class TestStaticTokenProvider:
         assert token.expires_at is not None
         # Should expire very far in the future (datetime.max)
         assert token.expires_at.year > 9000
-    
+
     @pytest.mark.asyncio
     async def test_always_returns_same_value(self):
         """
@@ -194,12 +195,12 @@ class TestStaticTokenProvider:
         THEN it should always return the same token value
         """
         provider = StaticTokenProvider("constant")
-        
+
         token1 = await provider.get_token()
         token2 = await provider.get_token()
-        
+
         assert token1.token_value == token2.token_value == "constant"
-    
+
     def test_telemetry_identifies_provider(self):
         """
         GIVEN a static token provider
@@ -208,7 +209,7 @@ class TestStaticTokenProvider:
         """
         provider = StaticTokenProvider("test")
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry["provider"] == "StaticTokenProvider"
         assert telemetry["path"] == "static"
 
@@ -217,7 +218,7 @@ class TestStaticTokenProvider:
 @pytest.mark.auth
 class TestPasswordGrantTokenProvider:
     """Tests for OAuth2 password grant token provider"""
-    
+
     @pytest.mark.asyncio
     @patch("auth.token.token_provider.requests.post")
     async def test_successful_token_fetch(self, mock_post):
@@ -247,7 +248,7 @@ class TestPasswordGrantTokenProvider:
 
         assert token.token_value == "oauth-token-123"
         assert token.expires_at is not None
-        
+
         # Verify correct request was made
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args.kwargs
@@ -255,7 +256,7 @@ class TestPasswordGrantTokenProvider:
         assert call_kwargs["data"]["username"] == "user"
         assert call_kwargs["data"]["password"] == "pass"
         assert call_kwargs["auth"] == ("client", "secret")
-    
+
     @pytest.mark.asyncio
     @patch("auth.token.token_provider.requests.post")
     async def test_uses_default_expiration_when_missing(self, mock_post):
@@ -282,11 +283,11 @@ class TestPasswordGrantTokenProvider:
         )
 
         token = await provider.get_token()
-        
+
         # Token should expire in approximately 300 seconds
         seconds_remaining = token.seconds_until_expiration()
         assert 295 <= seconds_remaining <= 305
-    
+
     @pytest.mark.asyncio
     @pytest.mark.slow
     @patch("auth.token.token_provider.requests.post")
@@ -299,14 +300,14 @@ class TestPasswordGrantTokenProvider:
         # First call fails, second succeeds
         failure_response = MagicMock()
         failure_response.raise_for_status.side_effect = HTTPError("500 Server Error")
-        
+
         success_response = MagicMock()
         success_response.json.return_value = {
             "access_token": "retry-token",
             "expires_in": 60,
         }
         success_response.raise_for_status.return_value = None
-        
+
         mock_post.side_effect = [failure_response, success_response]
 
         provider = PasswordGrantTokenProvider(
@@ -318,10 +319,10 @@ class TestPasswordGrantTokenProvider:
         )
 
         token = await provider.get_token()
-        
+
         assert token.token_value == "retry-token"
         assert mock_post.call_count == 2
-    
+
     @pytest.mark.asyncio
     @pytest.mark.slow
     @patch("auth.token.token_provider.requests.post")
@@ -347,10 +348,10 @@ class TestPasswordGrantTokenProvider:
 
         with pytest.raises(HTTPError, match="503"):
             await provider.get_token()
-        
+
         # Should have tried MAX_ATTEMPTS times
         assert mock_post.call_count == 5
-    
+
     @pytest.mark.asyncio
     @pytest.mark.slow
     @patch("auth.token.token_provider.requests.post")
@@ -372,7 +373,7 @@ class TestPasswordGrantTokenProvider:
 
         with pytest.raises(RequestException, match="Connection refused"):
             await provider.get_token()
-    
+
     @pytest.mark.asyncio
     @pytest.mark.slow
     @patch("auth.token.token_provider.requests.post")
@@ -397,7 +398,7 @@ class TestPasswordGrantTokenProvider:
 
         with pytest.raises(ValueError, match="Invalid JSON"):
             await provider.get_token()
-    
+
     def test_telemetry_identifies_provider(self):
         """
         GIVEN a password grant provider
@@ -411,9 +412,9 @@ class TestPasswordGrantTokenProvider:
             username="user",
             password="pass",
         )
-        
+
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry["provider"] == "PasswordGrantTokenProvider"
         assert telemetry["path"] == "token_url"
 
@@ -422,7 +423,7 @@ class TestPasswordGrantTokenProvider:
 @pytest.mark.auth
 class TestRpcTokenProvider:
     """Tests for RPC token provider (worker-side)"""
-    
+
     @pytest.mark.asyncio
     async def test_fetches_token_from_rpc_service(self):
         """
@@ -430,29 +431,33 @@ class TestRpcTokenProvider:
         WHEN get_token is called
         THEN it should fetch and deserialize the token
         """
-        with patch("auth.token.token_provider.aiohttp.ClientSession") as mock_session_cls:
+        with patch(
+            "auth.token.token_provider.aiohttp.ClientSession"
+        ) as mock_session_cls:
             # Create mock response
             mock_response = MagicMock()
             mock_response.raise_for_status = AsyncMock()
-            mock_response.json = AsyncMock(return_value={
-                "token_value": "rpc-token",
-                "expires_at": "2025-06-01T12:00:00"
-            })
-            
+            mock_response.json = AsyncMock(
+                return_value={
+                    "token_value": "rpc-token",
+                    "expires_at": "2025-06-01T12:00:00",
+                }
+            )
+
             # Create async context manager for response
             mock_response_cm = MagicMock()
             mock_response_cm.__aenter__ = AsyncMock(return_value=mock_response)
             mock_response_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             # Create mock session
             mock_session = MagicMock()
             mock_session.get = MagicMock(return_value=mock_response_cm)
-            
+
             # Create async context manager for session
             mock_session_cm = MagicMock()
             mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             mock_session_cls.return_value = mock_session_cm
 
             provider = RpcTokenProvider(
@@ -464,12 +469,12 @@ class TestRpcTokenProvider:
 
             assert token.token_value == "rpc-token"
             assert isinstance(token.expires_at, datetime)
-            
+
             # Verify correct URL was called
             mock_session.get.assert_called_once()
             call_args, call_kwargs = mock_session.get.call_args
             assert "http://driver:9999/token" in call_args
-    
+
     @pytest.mark.asyncio
     async def test_retries_on_network_failure(self):
         """
@@ -477,43 +482,50 @@ class TestRpcTokenProvider:
         WHEN the first request fails but second succeeds
         THEN it should retry and eventually return token
         """
-        with patch("auth.token.token_provider.aiohttp.ClientSession") as mock_session_cls:
+        with patch(
+            "auth.token.token_provider.aiohttp.ClientSession"
+        ) as mock_session_cls:
             # First response - failure
             failure_response = MagicMock()
             failure_response.raise_for_status = AsyncMock(
                 side_effect=Exception("Connection error")
             )
-            
+
             failure_response_cm = MagicMock()
             failure_response_cm.__aenter__ = AsyncMock(return_value=failure_response)
             failure_response_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             # Second response - success
             success_response = MagicMock()
             success_response.raise_for_status = AsyncMock()
-            success_response.json = AsyncMock(return_value={
-                "token_value": "retry-success",
-                "expires_at": "2025-06-01T12:00:00"
-            })
-            
+            success_response.json = AsyncMock(
+                return_value={
+                    "token_value": "retry-success",
+                    "expires_at": "2025-06-01T12:00:00",
+                }
+            )
+
             success_response_cm = MagicMock()
             success_response_cm.__aenter__ = AsyncMock(return_value=success_response)
             success_response_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             # Mock session
             mock_session = MagicMock()
             mock_session.get = MagicMock(
                 side_effect=[failure_response_cm, success_response_cm]
             )
-            
+
             mock_session_cm = MagicMock()
             mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             mock_session_cls.return_value = mock_session_cm
 
             # Mock the backoff delay to speed up test
-            with patch("auth.token.token_provider.async_exponential_backoff", new_callable=AsyncMock):
+            with patch(
+                "auth.token.token_provider.async_exponential_backoff",
+                new_callable=AsyncMock,
+            ):
                 provider = RpcTokenProvider(
                     rpc_url="http://driver:9999",
                     timeout=10,
@@ -521,10 +533,10 @@ class TestRpcTokenProvider:
                 )
 
                 token = await provider.get_token()
-                
+
                 assert token.token_value == "retry-success"
                 assert mock_session.get.call_count == 2
-     
+
     @pytest.mark.asyncio
     async def test_raises_after_max_retries(self):
         """
@@ -532,28 +544,33 @@ class TestRpcTokenProvider:
         WHEN all 3 attempts fail
         THEN it should raise RuntimeError
         """
-        with patch("auth.token.token_provider.aiohttp.ClientSession") as mock_session_cls:
+        with patch(
+            "auth.token.token_provider.aiohttp.ClientSession"
+        ) as mock_session_cls:
             # All responses fail
             failure_response = MagicMock()
             failure_response.raise_for_status = AsyncMock(
                 side_effect=Exception("Network error")
             )
-            
+
             failure_response_cm = MagicMock()
             failure_response_cm.__aenter__ = AsyncMock(return_value=failure_response)
             failure_response_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             mock_session = MagicMock()
             mock_session.get = MagicMock(return_value=failure_response_cm)
-            
+
             mock_session_cm = MagicMock()
             mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-            
+
             mock_session_cls.return_value = mock_session_cm
 
             # Mock backoff to speed up test
-            with patch("auth.token.token_provider.async_exponential_backoff", new_callable=AsyncMock):
+            with patch(
+                "auth.token.token_provider.async_exponential_backoff",
+                new_callable=AsyncMock,
+            ):
                 provider = RpcTokenProvider(
                     rpc_url="http://driver:9999",
                     max_retries=3,
@@ -561,7 +578,7 @@ class TestRpcTokenProvider:
 
                 with pytest.raises(RuntimeError, match="RPC token service unreachable"):
                     await provider.get_token()
-                
+
                 # Should have tried max_retries times
                 assert mock_session.get.call_count == 3
 
@@ -572,27 +589,33 @@ class TestRpcTokenProvider:
         WHEN making requests
         THEN it should configure the session with that timeout
         """
-        with patch("auth.token.token_provider.aiohttp.ClientSession") as mock_session_cls:
-            with patch("auth.token.token_provider.aiohttp.ClientTimeout") as mock_timeout_cls:
+        with patch(
+            "auth.token.token_provider.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            with patch(
+                "auth.token.token_provider.aiohttp.ClientTimeout"
+            ) as mock_timeout_cls:
                 # Mock successful response
                 mock_response = MagicMock()
                 mock_response.raise_for_status = AsyncMock()
-                mock_response.json = AsyncMock(return_value={
-                    "token_value": "test",
-                    "expires_at": "2025-06-01T12:00:00"
-                })
-                
+                mock_response.json = AsyncMock(
+                    return_value={
+                        "token_value": "test",
+                        "expires_at": "2025-06-01T12:00:00",
+                    }
+                )
+
                 mock_response_cm = MagicMock()
                 mock_response_cm.__aenter__ = AsyncMock(return_value=mock_response)
                 mock_response_cm.__aexit__ = AsyncMock(return_value=False)
-                
+
                 mock_session = MagicMock()
                 mock_session.get = MagicMock(return_value=mock_response_cm)
-                
+
                 mock_session_cm = MagicMock()
                 mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-                
+
                 mock_session_cls.return_value = mock_session_cm
 
                 provider = RpcTokenProvider(
@@ -604,7 +627,7 @@ class TestRpcTokenProvider:
 
                 # Verify timeout was configured
                 mock_timeout_cls.assert_called_with(total=15)
-    
+
     def test_telemetry_identifies_provider(self):
         """
         GIVEN an RPC token provider
@@ -615,9 +638,9 @@ class TestRpcTokenProvider:
             rpc_url="http://driver:9999",
             timeout=10,
         )
-        
+
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry["provider"] == "RpcTokenProvider"
         assert telemetry["path"] == "rpc"
 
@@ -626,7 +649,7 @@ class TestRpcTokenProvider:
 @pytest.mark.auth
 class TestFallbackTokenProvider:
     """Tests for fallback token provider logic"""
-    
+
     @pytest.mark.asyncio
     async def test_uses_primary_when_successful(self):
         """
@@ -643,7 +666,7 @@ class TestFallbackTokenProvider:
         assert token.token_value == "abc123"
         assert primary.calls == 1
         assert fallback.calls == 0
-    
+
     @pytest.mark.asyncio
     async def test_falls_back_when_primary_fails(self):
         """
@@ -659,7 +682,7 @@ class TestFallbackTokenProvider:
 
         assert token.token_value == "abc123"
         assert fallback.calls == 1
-    
+
     @pytest.mark.asyncio
     async def test_handles_none_primary_provider(self):
         """
@@ -669,12 +692,12 @@ class TestFallbackTokenProvider:
         """
         fallback = FakeTokenProvider(valid_token())
         provider = FallbackTokenProvider(None, fallback)
-        
+
         token = await provider.get_token()
-        
+
         assert token.token_value == "abc123"
         assert fallback.calls == 1
-    
+
     @pytest.mark.asyncio
     async def test_propagates_error_if_both_fail(self):
         """
@@ -689,7 +712,7 @@ class TestFallbackTokenProvider:
 
         with pytest.raises(RuntimeError, match="provider failed"):
             await provider.get_token()
-    
+
     @pytest.mark.asyncio
     async def test_telemetry_reflects_primary_on_success(self):
         """
@@ -699,14 +722,14 @@ class TestFallbackTokenProvider:
         """
         primary = FakeTokenProvider(valid_token())
         fallback = FakeTokenProvider(valid_token())
-        
+
         provider = FallbackTokenProvider(primary, fallback)
         await provider.get_token()
-        
+
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry["provider"] == "fake"
-    
+
     @pytest.mark.asyncio
     async def test_telemetry_reflects_fallback_on_primary_failure(self):
         """
@@ -716,14 +739,14 @@ class TestFallbackTokenProvider:
         """
         primary = FailingTokenProvider()
         fallback = FakeTokenProvider(valid_token())
-        
+
         provider = FallbackTokenProvider(primary, fallback)
         await provider.get_token()
-        
+
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry["provider"] == "fake"
-    
+
     @pytest.mark.asyncio
     async def test_telemetry_before_any_fetch_returns_empty(self):
         """
@@ -733,10 +756,10 @@ class TestFallbackTokenProvider:
         """
         primary = FakeTokenProvider(valid_token())
         fallback = FakeTokenProvider(valid_token())
-        
+
         provider = FallbackTokenProvider(primary, fallback)
         telemetry = provider.token_telemetry()
-        
+
         assert telemetry == {}
 
 
@@ -744,7 +767,7 @@ class TestFallbackTokenProvider:
 @pytest.mark.auth
 class TestPasswordGrantRetryMechanism:
     """Detailed tests for retry logic in PasswordGrantTokenProvider"""
-    
+
     @pytest.mark.asyncio
     @patch("auth.token.token_provider.requests.post")
     @patch("auth.token.token_provider.time.sleep")  # Mock sleep to speed up test
@@ -770,22 +793,22 @@ class TestPasswordGrantRetryMechanism:
 
         with pytest.raises(HTTPError):
             await provider.get_token()
-        
+
         # Verify sleep was called with increasing delays
         assert mock_sleep.call_count == 4  # 4 retries after first attempt
-        
+
         # Check that delays increase (with some jitter tolerance)
         delays = [call[0][0] for call in mock_sleep.call_args_list]
-        
+
         # First delay should be around 1.0 + jitter
         assert 1.0 <= delays[0] <= 1.5
-        
+
         # Second delay should be around 2.0 + jitter
         assert 2.0 <= delays[1] <= 2.5
-        
+
         # Third delay should be around 4.0 + jitter
         assert 4.0 <= delays[2] <= 4.5
-    
+
     @pytest.mark.asyncio
     @patch("auth.token.token_provider.requests.post")
     @patch("auth.token.token_provider.time.sleep")
@@ -809,8 +832,8 @@ class TestPasswordGrantRetryMechanism:
 
         with pytest.raises(HTTPError):
             await provider.get_token()
-        
+
         delays = [call[0][0] for call in mock_sleep.call_args_list]
-        
+
         # All delays should be <= MAX_DELAY (10.0) + jitter (0.5)
         assert all(delay <= 10.5 for delay in delays)

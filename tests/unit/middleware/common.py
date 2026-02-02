@@ -1,8 +1,11 @@
 import pytest
 from typing import Any
 from auth import TokenManager
-from request_execution import BearerTokenMiddleware, HeaderAuthMiddleware 
-from tests.fixtures.request_execution import base_exchange, terminal_handler_ok
+from request_execution import BearerTokenMiddleware, HeaderAuthMiddleware
+from tests.fixtures.request_execution.middleware import (
+    base_exchange,
+    terminal_handler_ok,
+)
 
 
 class FakeTokenManager(TokenManager):
@@ -36,4 +39,3 @@ async def test_header_auth_middleware_sets_basic_auth():
 
     auth = result.context.headers["Authorization"]
     assert auth.startswith("Basic ")
-
