@@ -28,6 +28,7 @@ land the data into a silver table for downstream consumption. This application u
 8. [Design Principles](#design-principles)
 9. [Middleware Model](#middleware-model)
 10. [Transport](#transport)
+11. [Local Development Platform](#local-development-platform)
 
 ---
 
@@ -451,3 +452,253 @@ This separation ensures that:
 |--------|--------|-------|
 | `aiohttp` | Default | Async, pooled, warm-up enabled |
 | `httpx` | Planned | Async + sync supported |
+
+---
+
+## Local Development Platform
+
+This project includes a fully containerized local development environment managed by Docker Compose. The platform replicates a production-like data engineering stack, allowing you to develop, test, and debug ETL pipelines locally before deploying to a cloud environment such as Databricks.
+
+All services are defined in `docker/docker-compose.yml` and orchestrated through the `Makefile`.
+
+### Prerequisites
+
+- Docker and Docker Compose V2
+- `direnv` (optional, for automatic environment variable loading from `.envrc`)
+- GNU Make
+
+### Platform Architecture
+
+The platform is composed of four layers: **infrastructure**, **catalog**, **compute**, and **orchestration**, with optional services for development and diagnostics.
+
+```
+                         +-------------------+
+                         |  Airflow Web UI   |  :8088
+                         +-------------------+
+                                  |
+                         +-------------------+
+                         | Airflow Scheduler |
+                         +--------+----------+
+                                  | submits jobs
+                         +--------v----------+
+                         |   Spark Master    |  :7077 / :8080
+                         +--------+----------+
+                              /        \
+                    +--------v--+  +--v--------+
+                    |  Worker 1 |  |  Worker 2 |
+                    +-----------+  +-----------+
+                         |              |
+              reads/writes data    queries schema
+                    |                   |
+             +------v------+    +------v--------+
+             |    MinIO     |   | Hive Metastore |  :9083
+             | (S3 storage) |   +-------+--------+
+             |  :9000/:9001 |           |
+             +------+-------+    +------v------+
+                    |            |  PostgreSQL  |  :5432
+                    +----------->|  (metadata)  |
+                                 +-------------+
+```
+
+### Service Reference
+
+#### Infrastructure Services
+
+| Service | Image | Container | Ports | Purpose |
+|---------|-------|-----------|-------|---------|
+| `postgres` | `postgres:15-alpine` | `postgres` | 5432 | Shared relational database for Hive Metastore catalog and Airflow metadata |
+| `minio` | `minio/minio:latest` | `minio` | 9000 (API), 9001 (Console) | S3-compatible object store serving as the data lake for Parquet and Delta Lake files |
+| `minio-init` | `minio/mc:latest` | `minio-init` | -- | One-shot container that creates `warehouse` and `spark-logs` buckets, then exits |
+
+**PostgreSQL** hosts two databases, created by `docker/postgres/init-multiple-dbs.sh`:
+- `metastore` -- Hive Metastore schema catalog
+- `airflow` -- Airflow task history, DAG state, and user accounts
+
+PostgreSQL is not an HTTP service. Connect via a database client (`psql`, DBeaver, etc.) or through Docker:
+```bash
+docker exec -it postgres psql -U postgres
+```
+
+**MinIO** provides two interfaces: the S3 API on port 9000 (used programmatically by Spark, Hive, and Airflow) and a web console on port 9001 for browsing buckets and objects manually at `http://localhost:9001`.
+
+#### Catalog Service
+
+| Service | Image | Container | Ports | Purpose |
+|---------|-------|-----------|-------|---------|
+| `hive-metastore` | `distributed-api-etl-hive:latest` | `hive-metastore` | 9083 | Schema catalog for the data lake -- stores table names, column definitions, partition layouts, and S3 paths |
+
+**Hive Metastore** does not process data. It is a metadata service that Spark queries over Thrift (port 9083) to resolve table schemas and data file locations. When Spark executes `spark.sql("SELECT * FROM my_table")`, the metastore tells Spark which columns exist and where the underlying Parquet/Delta files reside in MinIO. The metastore persists its catalog in the `metastore` PostgreSQL database.
+
+This service uses a custom Docker image (`docker/hive/Dockerfile`) that extends `apache/hive:4.0.0` with the PostgreSQL JDBC driver and baked-in configuration files (`hive-site.xml`, `core-site.xml`).
+
+#### Compute Services
+
+| Service | Image | Container | Ports | Purpose |
+|---------|-------|-----------|-------|---------|
+| `spark-master` | `distributed-api-etl-spark:latest` | `spark-master` | 7077 (cluster), 8080 (UI) | Spark cluster manager -- coordinates resource allocation and job distribution |
+| `spark-worker` | `distributed-api-etl-spark:latest` | auto-generated | -- | Spark execution nodes (2 replicas by default) -- run partition-level tasks |
+
+**Spark Master** accepts job submissions on port 7077 and distributes work across workers. The web UI at `http://localhost:8080` shows active applications, worker status, and running jobs.
+
+**Spark Workers** register with the master and provide CPU and memory for task execution. Each worker reads data from MinIO, processes it, and writes results back. The number of workers is controlled by the `SPARK_WORKERS` environment variable (default: 2) or the `WORKERS` Makefile variable.
+
+Both use a custom image (`docker/spark/Dockerfile`) based on `apache/spark:3.5.1` with Delta Lake, Hadoop AWS, and project Python dependencies pre-installed. Source code (`src/`, `tests/`, `dags/`) is mounted read-only so workers have access to application code without rebuilding the image.
+
+#### Orchestration Services
+
+| Service | Image | Container | Ports | Purpose |
+|---------|-------|-----------|-------|---------|
+| `airflow-init` | `distributed-api-etl-airflow:latest` | `airflow-init` | -- | One-shot container that runs database migrations and creates the admin user, then exits |
+| `airflow-webserver` | `distributed-api-etl-airflow:latest` | `airflow-webserver` | 8088 | Web UI for viewing, triggering, and monitoring DAGs |
+| `airflow-scheduler` | `distributed-api-etl-airflow:latest` | `airflow-scheduler` | -- | Execution engine that monitors DAG definitions and runs tasks on schedule |
+
+**Airflow** orchestrates pipeline execution. The scheduler reads DAG definitions from the `dags/` directory, determines which tasks are ready based on schedules and dependencies, and executes them using `LocalExecutor` (tasks run as subprocesses within the scheduler container). When a DAG task needs to run a Spark job, it submits it to the spark-master.
+
+The `airflow-init` container is a synchronization point: it migrates the database and creates the admin user exactly once before the webserver and scheduler start. Both long-running services declare a dependency on `airflow-init` completing successfully, preventing race conditions during database setup.
+
+Access the Airflow UI at `http://localhost:8088`.
+
+#### Optional Services (Profile-gated)
+
+| Service | Image | Container | Ports | Profile | Purpose |
+|---------|-------|-----------|-------|---------|---------|
+| `spark-history-server` | `distributed-api-etl-spark:latest` | `spark-history-server` | 18080 | `history` | Read-only web UI for inspecting completed Spark jobs |
+| `jupyter` | `distributed-api-etl-jupyter:latest` | `jupyter` | 8888 | `jupyter` | JupyterLab for interactive development and data exploration |
+
+These services are excluded from `docker compose up` by default. They start only when their profile is activated (see [Makefile Commands](#makefile-commands) below).
+
+**Spark History Server** reads event log files from the `spark-logs` volume and reconstructs the Spark monitoring UI for completed applications. It is useful for post-hoc debugging -- for example, investigating why an overnight Spark job ran slowly. The event logs are written by Spark regardless of whether the History Server is running, so it can be started on demand.
+
+**Jupyter** provides a JupyterLab notebook server connected to the Spark cluster. It mounts `src/` read-only and `notebooks/` read-write, allowing interactive prototyping of ETL logic, ad-hoc data exploration, and queries against the Hive Metastore before codifying work into Airflow DAGs.
+
+### Data Flow
+
+1. **Airflow scheduler** triggers a DAG task on a schedule or manual trigger
+2. The task **submits a Spark job** to the spark-master
+3. Spark-master distributes work across **spark-workers**
+4. Workers query **hive-metastore** to resolve table schemas and data file locations
+5. Workers read source data from and write results to **MinIO**
+6. Hive-metastore records new or updated table metadata in **PostgreSQL**
+7. Airflow logs task outcomes to **PostgreSQL**
+
+### Startup Order
+
+Docker Compose enforces the following dependency chain via `depends_on` with health checks:
+
+```
+postgres (healthy)
+  ├── minio-init (completed) ← minio (healthy)
+  │     └── hive-metastore (healthy)
+  │           └── spark-master (healthy)
+  │                 ├── spark-worker (×N)
+  │                 ├── spark-history-server (optional)
+  │                 └── jupyter (optional)
+  └── airflow-init (completed)
+        ├── airflow-webserver
+        └── airflow-scheduler
+```
+
+### Network and Volumes
+
+All services communicate over a single Docker bridge network (`etl-network`), which provides DNS resolution by container name (e.g., `spark-master`, `postgres`, `minio`).
+
+| Volume | Purpose |
+|--------|---------|
+| `postgres-data` | PostgreSQL data directory (Hive catalog + Airflow metadata) |
+| `minio-data` | MinIO object storage (data lake files) |
+| `hive-warehouse` | Hive warehouse directory |
+| `spark-logs` | Spark event logs (consumed by History Server) |
+| `airflow-logs` | Airflow task execution logs |
+
+Volumes persist data across container restarts. Use `make clean-volumes` to delete all volumes and reinitialize from scratch.
+
+### Port Reference
+
+| Port | Service | Protocol | URL |
+|------|---------|----------|-----|
+| 5432 | PostgreSQL | PostgreSQL wire protocol | `psql -h localhost -U postgres` |
+| 7077 | Spark Master | Spark RPC | `spark://localhost:7077` |
+| 8080 | Spark Master UI | HTTP | `http://localhost:8080` |
+| 8088 | Airflow Web UI | HTTP | `http://localhost:8088` |
+| 8888 | Jupyter | HTTP | `http://localhost:8888` |
+| 9000 | MinIO S3 API | HTTP | `http://localhost:9000` |
+| 9001 | MinIO Console | HTTP | `http://localhost:9001` |
+| 9083 | Hive Metastore | Thrift | `thrift://localhost:9083` |
+| 18080 | Spark History Server | HTTP | `http://localhost:18080` |
+
+### Default Credentials
+
+Credentials are defined in `.envrc` and passed to containers via environment variable substitution in `docker-compose.yml`. Run `direnv allow` to load them automatically, or export them manually before starting the stack.
+
+| Service | Username | Password |
+|---------|----------|----------|
+| MinIO | `minioadmin` | `minioadmin` |
+| Airflow | `admin` | `admin` |
+| PostgreSQL | `postgres` | `postgres` |
+| Jupyter | -- | Token: `jupyter` |
+
+### Custom Docker Images
+
+Three services require custom images that must be built before starting the stack:
+
+| Image | Dockerfile | Base | Additions |
+|-------|-----------|------|-----------|
+| `distributed-api-etl-spark` | `docker/spark/Dockerfile` | `apache/spark:3.5.1` | Delta Lake JARs, Hadoop AWS SDK, Python dependencies |
+| `distributed-api-etl-airflow` | `docker/airflow/Dockerfile` | `apache/airflow:2.8.1` | Java 17 (for Spark submit), Spark and AWS Airflow providers |
+| `distributed-api-etl-hive` | `docker/hive/Dockerfile` | `apache/hive:4.0.0` | PostgreSQL JDBC driver, Hive and S3 configuration |
+| `distributed-api-etl-jupyter` | `docker/jupyter/Dockerfile` | -- | JupyterLab with PySpark and project dependencies (optional) |
+
+Build all required images with `make build`. Build the optional Jupyter image with `make build-jupyter`.
+
+### Makefile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make up` | Start all default services |
+| `make up-jupyter` | Start all services including Jupyter |
+| `make up-history` | Start all services including Spark History Server |
+| `make up-all` | Start all services including all optional profiles |
+| `make down` | Stop all services (including optional profiles) |
+| `make restart` | Stop and start all default services |
+| `make logs` | Tail logs for all services |
+| `make logs SERVICE=<name>` | Tail logs for a specific service |
+| `make ps` | Show running containers |
+| `make build` | Build all required custom images (Spark, Airflow, Hive) |
+| `make build-spark` | Build the Spark image |
+| `make build-airflow` | Build the Airflow image |
+| `make build-hive` | Build the Hive Metastore image |
+| `make build-jupyter` | Build the Jupyter image (optional) |
+| `make clean` | Stop containers and remove networks and orphans |
+| `make clean-volumes` | Stop containers and remove all volumes (deletes data) |
+| `make clean-all` | Full cleanup including volumes and locally built images |
+| `make spark-shell` | Open an interactive PySpark shell on the cluster |
+| `make spark-submit APP=<path>` | Submit a Spark job to the cluster |
+| `make spark-sql` | Open an interactive Spark SQL shell |
+| `make shell CONTAINER=<name>` | Open a bash shell in a running container |
+| `make test` | Run all tests |
+| `make test-unit` | Run unit tests only |
+| `make test-integration` | Run integration tests only |
+| `make lint` | Run linter (`ruff check`) |
+| `make format` | Format code (`ruff format`) |
+| `make typecheck` | Run type checker (`pyright`) |
+
+### Quick Start
+
+```bash
+# 1. Allow direnv to load environment variables
+direnv allow
+
+# 2. Build all required images
+make build
+
+# 3. Start the platform
+make up
+
+# 4. Verify all services are running
+make ps
+
+# 5. Access the UIs
+#    Spark Master:  http://localhost:8080
+#    Airflow:       http://localhost:8088
+#    MinIO Console: http://localhost:9001
+```
