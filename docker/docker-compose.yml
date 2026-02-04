@@ -1,0 +1,302 @@
+x-spark-common: &spark-common
+  image: ${PROJECT_NAME:-distributed-api-etl}-spark:latest
+  environment:
+    - SPARK_MASTER_URL=spark://spark-master:7077
+    - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
+    - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+    - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+    - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    - AWS_REGION=us-east-1
+  volumes:
+    - ../src:/opt/spark/work/src:ro
+    - ../tests:/opt/spark/work/tests:ro
+    - ../dags:/opt/spark/work/dags:ro
+    - spark-logs:/opt/spark/spark-events
+  networks:
+    - etl-network
+
+x-airflow-common: &airflow-common
+  image: ${PROJECT_NAME:-distributed-api-etl}-airflow:latest
+  environment:
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/airflow
+    - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-}
+    - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-supersecretkey}
+    - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+    - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+  volumes:
+    - ../dags:/opt/airflow/dags:ro
+    - ../src:/opt/airflow/src:ro
+    - airflow-logs:/opt/airflow/logs
+  networks:
+    - etl-network
+  depends_on:
+    postgres:
+      condition: service_healthy
+    airflow-init:
+      condition: service_completed_successfully
+
+services:
+  # ============================================================
+  # INFRASTRUCTURE SERVICES
+  # ============================================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_MULTIPLE_DATABASES: metastore,airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb myminio/warehouse --ignore-existing;
+      mc mb myminio/spark-logs --ignore-existing;
+      mc anonymous set download myminio/warehouse;
+      echo 'MinIO buckets initialized';
+      "
+    networks:
+      - etl-network
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  # ============================================================
+  # HIVE METASTORE
+  # ============================================================
+
+  hive-metastore:
+    image: ${PROJECT_NAME:-distributed-api-etl}-hive:latest
+    container_name: hive-metastore
+    command: /opt/hive/bin/schematool -dbType postgres -initSchema && /opt/hive/bin/hive --service metastore
+    entrypoint: >
+      /bin/bash -c "
+      /opt/hive/bin/schematool -dbType postgres -initSchema || true;
+      /opt/hive/bin/hive --service metastore
+      "
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER:-postgres}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - hive-warehouse:/user/hive/warehouse
+    ports:
+      - "9083:9083"
+    networks:
+      - etl-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9083"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ============================================================
+  # SPARK CLUSTER
+  # ============================================================
+
+  spark-master:
+    <<: *spark-common
+    container_name: spark-master
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_REGION=us-east-1
+    command:
+      [
+        "/opt/spark/bin/spark-class",
+        "org.apache.spark.deploy.master.Master",
+        "--host",
+        "spark-master",
+        "--port",
+        "7077",
+        "--webui-port",
+        "8080",
+      ]
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  spark-worker:
+    <<: *spark-common
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_REGION=us-east-1
+    command:
+      [
+        "/opt/spark/bin/spark-class",
+        "org.apache.spark.deploy.worker.Worker",
+        "spark://spark-master:7077",
+      ]
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    deploy:
+      replicas: ${SPARK_WORKERS:-2}
+
+  # ============================================================
+  # AIRFLOW
+  # ============================================================
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER:-admin} \
+          --password ${AIRFLOW_ADMIN_PASSWORD:-admin} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true
+        echo 'Airflow initialized'
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================
+  # OPTIONAL SERVICES (Profiles)
+  # ============================================================
+
+  spark-history-server:
+    <<: *spark-common
+    container_name: spark-history-server
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    environment:
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=/opt/spark/spark-events
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "18080:18080"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    profiles:
+      - history
+
+  jupyter:
+    build:
+      context: ..
+      dockerfile: docker/jupyter/Dockerfile
+    container_name: jupyter
+    environment:
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-jupyter}
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - ../src:/home/jovyan/work/src:ro
+      - ../notebooks:/home/jovyan/work/notebooks
+    ports:
+      - "8888:8888"
+    networks:
+      - etl-network
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    profiles:
+      - jupyter
+
+# ============================================================
+# NETWORKS & VOLUMES
+# ============================================================
+
+networks:
+  etl-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  minio-data:
+  hive-warehouse:
+  spark-logs:
+  airflow-logs:
