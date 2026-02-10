@@ -1,0 +1,77 @@
+# ============================================================
+# PIPELINE CONFIGURATION - Basic Authentication
+# ============================================================
+# This example demonstrates HTTP Basic Authentication.
+#
+# Basic auth sends credentials as a Base64-encoded header:
+#   Authorization: Basic base64(username:password)
+#
+# Start the mock API with:
+#   make up-keycloak
+#
+# Mock API endpoints: http://localhost:8200
+#   - /api/basic/data - requires basic auth (test-user:test-password)
+#
+# Credentials:
+#   Username: test-user
+#   Password: test-password
+
+# -------------------------
+# Endpoint Configuration
+# -------------------------
+endpoint:
+  name: basic_auth_demo
+  base_url: "http://mock-api:8000"
+  url_path: "http://mock-api:8000/api/basic/data"
+  method: GET
+  vendor: mock-api
+  headers:
+    Accept: "application/json"
+
+# -------------------------
+# Transport Configuration
+# -------------------------
+transport:
+  base_timeout: 30
+  warmup_timeout: 10
+  tcp_connection:
+    limit: 2
+
+# -------------------------
+# Authentication (HTTP Basic)
+# -------------------------
+auth:
+  type: basic
+  username: "test-user"
+  password: "test-password"
+
+# -------------------------
+# Middleware Pipeline
+# -------------------------
+middleware:
+  - type: logging
+  - type: timing
+  - type: json_body
+  - type: retry
+    max_attempts: 5
+    retry_status_codes: [429, 500, 502, 503]
+    base_delay: 0.2
+    max_delay: 2.0
+
+# -------------------------
+# ETL Tables
+# -------------------------
+tables:
+  sink:
+    name: basic_auth_demo_response
+    namespace: demo
+    mode: overwrite
+
+  column_mappings: []
+
+# -------------------------
+# Execution
+# -------------------------
+execution:
+  num_partitions: 5
+  batch_size: 100

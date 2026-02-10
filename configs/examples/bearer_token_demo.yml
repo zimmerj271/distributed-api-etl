@@ -1,0 +1,72 @@
+# ============================================================
+# PIPELINE CONFIGURATION - Static Bearer Token
+# ============================================================
+# This example demonstrates static Bearer token authentication.
+#
+# Unlike OAuth2, this uses a pre-configured token that doesn't expire
+# or refresh. Useful for APIs that issue long-lived API keys.
+#
+# Start the mock API with:
+#   make up-keycloak
+#
+# Mock API endpoints: http://localhost:8200
+#   - /api/bearer/data - requires any Bearer token
+
+# -------------------------
+# Endpoint Configuration
+# -------------------------
+endpoint:
+  name: bearer_token_demo
+  base_url: "http://mock-api:8000"
+  url_path: "http://mock-api:8000/api/bearer/data"
+  method: GET
+  vendor: mock-api
+  headers:
+    Accept: "application/json"
+
+# -------------------------
+# Transport Configuration
+# -------------------------
+transport:
+  base_timeout: 30
+  warmup_timeout: 10
+  tcp_connection:
+    limit: 2
+
+# -------------------------
+# Authentication (Static Bearer Token)
+# -------------------------
+auth:
+  type: bearer
+  token: "my-static-api-key-12345"
+
+# -------------------------
+# Middleware Pipeline
+# -------------------------
+middleware:
+  - type: logging
+  - type: timing
+  - type: json_body
+  - type: retry
+    max_attempts: 5
+    retry_status_codes: [429, 500, 502, 503]
+    base_delay: 0.2
+    max_delay: 2.0
+
+# -------------------------
+# ETL Tables
+# -------------------------
+tables:
+  sink:
+    name: bearer_token_demo_response
+    namespace: demo
+    mode: overwrite
+
+  column_mappings: []
+
+# -------------------------
+# Execution
+# -------------------------
+execution:
+  num_partitions: 5
+  batch_size: 100
