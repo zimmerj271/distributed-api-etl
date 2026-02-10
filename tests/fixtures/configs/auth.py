@@ -3,7 +3,7 @@ from config.models.auth import (
     NoAuthConfig,
     BasicAuthConfig,
     BearerTokenConfig,
-    OAuth2PasswordConfig
+    OAuth2Config,
 )
 from auth.strategy import AuthType
 
@@ -32,12 +32,23 @@ def bearer_auth():
 
 @pytest.fixture
 def oauth2_password_auth():
-    return OAuth2PasswordConfig(
+    return OAuth2Config(
         type=AuthType.OAUTH2_PASSWORD,
         token_url="https://auth/token",
         client_id="client",
         client_secret="secret",
         username="user",
         password="pass",
+        refresh_margin=120,
+    )
+
+
+@pytest.fixture
+def oauth2_client_credentials_auth():
+    return OAuth2Config(
+        type=AuthType.OAUTH2_CLIENT_CREDENTIALS,
+        token_url="https://auth/token",
+        client_id="client",
+        client_secret="secret",
         refresh_margin=120,
     )

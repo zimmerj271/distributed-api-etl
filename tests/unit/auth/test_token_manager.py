@@ -533,6 +533,12 @@ def reset_token_manager_singleton():
     """
     from core.singleton import SingletonMeta
 
+    # Clear singleton instances before each test
+    if TokenManager in SingletonMeta._instances:
+        del SingletonMeta._instances[TokenManager]
+    if DriverTokenManager in SingletonMeta._instances:
+        del SingletonMeta._instances[DriverTokenManager]
+
     yield
 
     # Clear singleton instances after each test

@@ -1,7 +1,7 @@
 import logging
 from pyspark.sql import SparkSession
 from auth.rpc.service import RpcService, TokenRpcService
-from auth.token.token_provider import PasswordGrantTokenProvider 
+from auth.token.token_provider import TokenProvider
 from auth.token.token_manager import DriverTokenManager
 from core.coroutine import AsyncBackgroundService, BackgroundProcess
 
@@ -21,15 +21,14 @@ class RpcBootstrapper:
     """
 
     def __init__(
-            self, 
-            spark: SparkSession, 
-            token_url: str,
-            credentials: dict[str, str], 
-            refresh_margin: int = 60) -> None:
+        self,
+        spark: SparkSession,
+        token_provider: TokenProvider,
+        refresh_margin: int = 60,
+    ) -> None:
         self._spark = spark
-        self._token_url = token_url
-        self._credentials = credentials
-        self._refresh_margin = refresh_margin 
+        self._token_provider = token_provider
+        self._refresh_margin = refresh_margin
 
         self._token_manager: DriverTokenManager | None = None
         self._rpc_service: RpcService | None = None
@@ -46,23 +45,16 @@ class RpcBootstrapper:
     def start(self) -> None:
         """
         Asynchronous Token system bootstrap.
-        1. Create TokenProvider 
-        2. Create TokenManager 
-        3. Start RPC service (spawns its own thread + event loop)
-        4. Start TokenManager background refresh on the RPC event loop
+        1. Create TokenManager with the provided TokenProvider
+        2. Start RPC service (spawns its own thread + event loop)
+        3. Start TokenManager background refresh on the RPC event loop
         """
 
         self._logger.info("Starting RPC token service...")
 
-        provider = PasswordGrantTokenProvider(
-            token_url=self._token_url,
-            client_id=self._credentials["client_id"],
-            client_secret=self._credentials["client_secret"],
-            username=self._credentials["username"],
-            password=self._credentials["password"],
+        token_manager: DriverTokenManager = DriverTokenManager(
+            self._token_provider, refresh_margin=self._refresh_margin
         )
-
-        token_manager: DriverTokenManager = DriverTokenManager(provider)
         rpc_service: RpcService = TokenRpcService(
             spark=self._spark,
             token_manager=token_manager,
@@ -108,4 +100,3 @@ class RpcBootstrapper:
             self._rpc_runtime.stop()
 
         self._logger.info("Shutdown complete.")
-

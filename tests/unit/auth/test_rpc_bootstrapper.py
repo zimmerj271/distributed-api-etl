@@ -2,37 +2,37 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from auth.rpc.bootstrap import RpcBootstrapper
+from auth.token.token_provider import TokenProvider
 from tests.fixtures.spark import FakeSparkSession
+
+
+class FakeTokenProvider(TokenProvider):
+    async def get_token(self):
+        return MagicMock()
+
+    def token_telemetry(self):
+        return {}
 
 
 @patch("auth.rpc.bootstrap.AsyncBackgroundService")
 @patch("auth.rpc.bootstrap.TokenRpcService")
 @patch("auth.rpc.bootstrap.DriverTokenManager")
-@patch("auth.rpc.bootstrap.PasswordGrantTokenProvider")
 def test_rpc_bootstrapper_start(
-    mock_provider,
     mock_tm,
     mock_rpc,
     mock_bg,
 ):
     spark = FakeSparkSession()
-    credentials = {
-        "client_id": "id",
-        "client_secret": "secret",
-        "username": "user",
-        "password": "pass",
-    }
+    token_provider = FakeTokenProvider()
 
     bootstrap = RpcBootstrapper(
         spark=spark,
-        token_url="http://token",
-        credentials=credentials,
+        token_provider=token_provider,
     )
 
     bootstrap.start()
 
-    mock_provider.assert_called_once()
-    mock_tm.assert_called_once()
+    mock_tm.assert_called_once_with(token_provider, refresh_margin=60)
     mock_rpc.assert_called_once()
     assert mock_bg.call_count == 2
 
@@ -40,8 +40,7 @@ def test_rpc_bootstrapper_start(
 def test_rpc_bootstrapper_url_before_start_raises():
     bootstrap = RpcBootstrapper(
         spark=FakeSparkSession(),
-        token_url="http://token",
-        credentials={},
+        token_provider=FakeTokenProvider(),
     )
 
     with pytest.raises(ValueError):
@@ -53,8 +52,7 @@ def test_rpc_bootstrapper_stop(mock_bg):
     spark = FakeSparkSession()
     bootstrap = RpcBootstrapper(
         spark=spark,
-        token_url="http://token",
-        credentials={},
+        token_provider=FakeTokenProvider(),
     )
 
     bootstrap._token_runtime = MagicMock()
@@ -64,4 +62,3 @@ def test_rpc_bootstrapper_stop(mock_bg):
 
     bootstrap._token_runtime.stop.assert_called_once()
     bootstrap._rpc_runtime.stop.assert_called_once()
-

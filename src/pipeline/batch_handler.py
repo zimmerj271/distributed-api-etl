@@ -44,5 +44,5 @@ class ApiBatchHandler(BatchHandler):
         result_df = self._spark.createDataFrame(rdd, schema=schema)
 
 
-        result_df.write.mode("append").saveAsTable(self.sink_table)
+        result_df.write.format("delta").mode("append").saveAsTable(self.sink_table)
 

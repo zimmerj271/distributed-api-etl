@@ -7,13 +7,13 @@ from auth.strategy import AuthType
 
 T = TypeVar("T", bound=AuthType)
 
+
 class AuthConfigModel(BaseModel, ABC, Generic[T]):
     """Base config for all auth types."""
-    type: T 
 
-    model_config = {
-        "frozen": True
-    }
+    type: T
+
+    model_config = {"frozen": True}
 
     def to_runtime_args(self) -> dict[str, Any]:
         return {}
@@ -45,24 +45,30 @@ class BearerTokenConfig(AuthConfigModel):
         }
 
 
-class OAuth2PasswordConfig(AuthConfigModel):
-    type: Literal[AuthType.OAUTH2_PASSWORD] = AuthType.OAUTH2_PASSWORD
+class OAuth2Config(AuthConfigModel):
+    type: Literal[AuthType.OAUTH2_PASSWORD, AuthType.OAUTH2_CLIENT_CREDENTIALS] = (
+        AuthType.OAUTH2_CLIENT_CREDENTIALS
+    )
     token_url: str
     client_id: str
     client_secret: str
-    username: str
-    password: str
+    username: str | None = None
+    password: str | None = None
     refresh_margin: int = 60
 
     def to_runtime_args(self) -> dict[str, Any]:
-        return {
+        args = {
             "token_url": self.token_url,
-            "username": self.username,
-            "password": self.password,
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "refresh_margin": self.refresh_margin,
         }
+        # Only include username/password if set (for password grant)
+        if self.username is not None:
+            args["username"] = self.username
+        if self.password is not None:
+            args["password"] = self.password
+        return args
 
 
 AuthConfigUnion = Annotated[
@@ -70,7 +76,7 @@ AuthConfigUnion = Annotated[
         NoAuthConfig,
         BasicAuthConfig,
         BearerTokenConfig,
-        OAuth2PasswordConfig,
+        OAuth2Config,
     ],
-    Field(discriminator="type")
+    Field(discriminator="type"),
 ]

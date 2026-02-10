@@ -173,19 +173,20 @@ class PipelineOrchestrator:
         )
 
     def _start_runtime_service(self) -> None:
+        # Start runtime service for OAuth2 strategies (RPC token distribution)
         if isinstance(self._auth_strategy, AuthRuntime):
             self._logger.info("Starting driver-side authentication runtime service")
             self._auth_strategy.runtime_start(self._spark)
-
-            self._logger.info("Adding authentication middleware")
-            self._middleware_factories = (
-                self._middleware_factories
-                + self._auth_strategy.get_middleware_factories()
-            )
         else:
             self._logger.info(
                 "Authentication does not have a runtime service... skipping"
             )
+
+        # Always add auth middleware factories (basic, bearer, oauth2, etc.)
+        auth_middleware = self._auth_strategy.get_middleware_factories()
+        if auth_middleware:
+            self._logger.info("Adding authentication middleware")
+            self._middleware_factories = self._middleware_factories + auth_middleware
 
     def run(self) -> None:
         configure_logging()
