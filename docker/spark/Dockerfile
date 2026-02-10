@@ -29,6 +29,15 @@ COPY docker/spark/spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 COPY docker/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+# Create work directory with proper permissions for Spark workers
+RUN mkdir -p /opt/spark/work && chown -R spark:spark /opt/spark/work
+
+# Copy application code (can be overridden by volume mounts in development)
+COPY src/ /opt/spark/work/src/
+
+# Set PYTHONPATH for application code
+ENV PYTHONPATH=/opt/spark/work/src
+
 # Set working directory
 WORKDIR /opt/spark/work
 

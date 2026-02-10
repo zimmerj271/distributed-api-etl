@@ -7,10 +7,12 @@ x-spark-common: &spark-common
     - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
     - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
     - AWS_REGION=us-east-1
+    - PYTHONPATH=/opt/spark/app/src
   volumes:
-    - ../src:/opt/spark/work/src:ro
-    - ../tests:/opt/spark/work/tests:ro
-    - ../dags:/opt/spark/work/dags:ro
+    - ../src:/opt/spark/app/src:ro
+    - ../tests:/opt/spark/app/tests:ro
+    - ../dags:/opt/spark/app/dags:ro
+    - ../configs:/opt/spark/app/configs:ro
     - spark-logs:/opt/spark/spark-events
   networks:
     - etl-network
@@ -28,7 +30,7 @@ x-airflow-common: &airflow-common
     - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
   volumes:
     - ../dags:/opt/airflow/dags:ro
-    - ../src:/opt/airflow/src:ro
+    - ../configs:/opt/airflow/configs:ro
     - airflow-logs:/opt/airflow/logs
   networks:
     - etl-network
@@ -147,11 +149,6 @@ services:
   spark-master:
     <<: *spark-common
     container_name: spark-master
-    environment:
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_REGION=us-east-1
     command:
       [
         "/opt/spark/bin/spark-class",
@@ -163,9 +160,17 @@ services:
         "--webui-port",
         "8080",
       ]
+    environment:
+      - SPARK_MASTER_OPTS=-Dspark.master.rest.enabled=true
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_REGION=us-east-1
+      - PYTHONPATH=/opt/spark/app/src
     ports:
       - "7077:7077"
       - "8080:8080"
+      - "6066:6066"
     depends_on:
       hive-metastore:
         condition: service_healthy
@@ -177,13 +182,6 @@ services:
 
   spark-worker:
     <<: *spark-common
-    environment:
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
-      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_REGION=us-east-1
     command:
       [
         "/opt/spark/bin/spark-class",
@@ -271,11 +269,15 @@ services:
     environment:
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-jupyter}
       - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_CONF_DIR=/opt/spark/conf
+      - PYTHONPATH=/opt/spark/app/src
       - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
       - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
-      - ../src:/home/jovyan/work/src:ro
+      - ../src:/opt/spark/app/src:ro
       - ../notebooks:/home/jovyan/work/notebooks
+      - ../configs:/opt/spark/app/configs:ro
+      - ./jupyter/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
     ports:
       - "8888:8888"
     networks:
@@ -285,6 +287,53 @@ services:
         condition: service_healthy
     profiles:
       - jupyter
+
+  # ============================================================
+  # KEYCLOAK (OAuth2 Identity Provider)
+  # ============================================================
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: keycloak
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "8180:8080"
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    profiles:
+      - keycloak
+
+  # ============================================================
+  # MOCK API (Authentication Testing Endpoints)
+  # ============================================================
+
+  mock-api:
+    build:
+      context: ./mock-api
+      dockerfile: Dockerfile
+    container_name: mock-api
+    ports:
+      - "8200:8000"
+    networks:
+      - etl-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - keycloak
 
 # ============================================================
 # NETWORKS & VOLUMES
