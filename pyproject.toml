@@ -13,3 +13,4 @@ markers = [
     "middleware: middleware tests",
 ]
 import_mode = "importlib"
+asyncio_mode = "auto"
