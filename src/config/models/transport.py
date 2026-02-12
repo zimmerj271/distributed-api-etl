@@ -1,11 +1,11 @@
 from pathlib import Path
-from typing import Any 
+from typing import Any
 from pydantic import Field, BaseModel
 
 from request_execution.transport.base import TransportEngineType
 
 
-class TlsConfig(BaseModel): 
+class TlsConfig(BaseModel):
     enabled: bool = False
     verify: bool = True
     ca_bundle: Path | None = None
@@ -24,6 +24,7 @@ class TcpConnectionConfig(BaseModel):
 
 class TransportEngineModel(BaseModel):
     """Base config for transport engine"""
+
     type: TransportEngineType
 
     def to_runtime_args(self) -> dict[str, Any]:
@@ -35,8 +36,12 @@ class AiohttpEngineConfig(TransportEngineModel):
     base_timeout: int
     warmup_timeout: int
     tcp_connection: TcpConnectionConfig = Field(default_factory=TcpConnectionConfig)
+    diagnostics: bool = Field(
+        default=True,
+        description="Adds transport engine diagnostics to the response_metadata field for each request",
+    )
 
-    def to_runtime_args(self) -> dict[str, Any]: 
+    def to_runtime_args(self) -> dict[str, Any]:
         return {
             "connector_config": self.tcp_connection,
             "base_timeout": self.base_timeout,

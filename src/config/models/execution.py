@@ -5,15 +5,15 @@ class ExecutionConfig(BaseModel):
     """
     Controls Spark execution and pipeline batching behavior.
     """
+
     num_partitions: int = Field(
-        default=200, 
-        description="Number of partitions to use for API execution"
+        default=200, description="Number of partitions to use for API execution"
     )
-    batch_size: int = Field(
-        default=10_000,
-        description="Number of rows per batch"
-    )
+    batch_size: int = Field(default=10_000, description="Number of rows per batch")
     max_attempts: int = Field(
-        default=5,
-        description="Number of pipeline retry attempts before failure"
+        default=5, description="Number of pipeline retry attempts before failure"
+    )
+    max_concurrent_requests: int = Field(
+        default=20,
+        description="Maximum number of requests made concurently per partition",
     )
