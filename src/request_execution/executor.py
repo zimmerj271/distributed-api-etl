@@ -22,11 +22,9 @@ class RequestExecutor:
         self,
         transport: TransportEngine,
         middleware_factories: list[Callable[[], MIDDLEWARE_FUNC]],
-        enable_transport_diagnostics: bool = True,
     ) -> None:
         self.transport = transport
         self._middleware_factories = middleware_factories
-        self._enable_transport_diagnostics = enable_transport_diagnostics
 
     async def send(self, context: RequestContext) -> RequestExchange:
         """
@@ -35,9 +33,6 @@ class RequestExecutor:
         """
 
         pipeline = MiddlewarePipeline()
-
-        if self._enable_transport_diagnostics:
-            pipeline.add(TransportDiagnosticMiddleware(self.transport))
 
         for factory in self._middleware_factories:
             pipeline.add(factory())
