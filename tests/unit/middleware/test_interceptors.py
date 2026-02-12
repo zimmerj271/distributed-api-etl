@@ -326,13 +326,14 @@ class TestParamInjectorMiddleware:
     @pytest.mark.asyncio
     async def test_injects_params_from_row(self):
         """
-        GIVEN param injector middleware with bindings
-        WHEN request has row data
+        GIVEN param injector middleware
+        WHEN request context has param_mapping and row data
         THEN params should be injected from row
         """
-        mw = ParamInjectorMiddleware({"patient_id": "tulip_id"})
+        mw = ParamInjectorMiddleware()
 
         req = base_exchange()
+        req.context.param_mapping = {"patient_id": "tulip_id"}
         req.context._row = Row(tulip_id="P123", other_field="value")
 
         async def handler(r):
@@ -346,15 +347,14 @@ class TestParamInjectorMiddleware:
     @pytest.mark.asyncio
     async def test_injects_multiple_params(self):
         """
-        GIVEN param injector with multiple bindings
-        WHEN request has row data
+        GIVEN param injector middleware
+        WHEN request context has multiple param mappings
         THEN all params should be injected
         """
-        mw = ParamInjectorMiddleware(
-            {"patient": "patient_id", "encounter": "encounter_id"}
-        )
+        mw = ParamInjectorMiddleware()
 
         req = base_exchange()
+        req.context.param_mapping = {"patient": "patient_id", "encounter": "encounter_id"}
         req.context._row = Row(patient_id="P123", encounter_id="E456")
 
         async def handler(r):
@@ -370,11 +370,12 @@ class TestParamInjectorMiddleware:
         """
         GIVEN param injector middleware
         WHEN request has no row data
-        THEN it should not crash
+        THEN it should not crash and initialize params
         """
-        mw = ParamInjectorMiddleware({"patient": "patient_id"})
+        mw = ParamInjectorMiddleware()
 
         req = base_exchange()
+        req.context.param_mapping = {"patient": "patient_id"}
         req.context._row = None
 
         async def handler(r):
@@ -382,20 +383,19 @@ class TestParamInjectorMiddleware:
 
         result = await mw(req, handler)
 
-        # Should not crash, just pass through
         assert result is not None
+        assert result.context.params == {}
 
     @pytest.mark.asyncio
-    async def test_clears_existing_params(self):
+    async def test_handles_no_param_mapping(self):
         """
         GIVEN param injector middleware
-        WHEN request already has params
-        THEN it should clear and replace them
+        WHEN request context has no param_mapping
+        THEN it should initialize params and pass through
         """
-        mw = ParamInjectorMiddleware({"patient": "patient_id"})
+        mw = ParamInjectorMiddleware()
 
         req = base_exchange()
-        req.context.params = {"old_param": "old_value"}
         req.context._row = Row(patient_id="P123")
 
         async def handler(r):
@@ -403,5 +403,27 @@ class TestParamInjectorMiddleware:
 
         result = await mw(req, handler)
 
-        assert "old_param" not in result.context.params
+        assert result is not None
+        assert result.context.params == {}
+
+    @pytest.mark.asyncio
+    async def test_preserves_existing_params(self):
+        """
+        GIVEN param injector middleware
+        WHEN request already has params
+        THEN existing params should be preserved alongside injected ones
+        """
+        mw = ParamInjectorMiddleware()
+
+        req = base_exchange()
+        req.context.params = {"existing_param": "existing_value"}
+        req.context.param_mapping = {"patient": "patient_id"}
+        req.context._row = Row(patient_id="P123")
+
+        async def handler(r):
+            return r
+
+        result = await mw(req, handler)
+
+        assert result.context.params["existing_param"] == "existing_value"
         assert result.context.params["patient"] == "P123"

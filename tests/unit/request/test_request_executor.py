@@ -17,9 +17,9 @@ from tests.fixtures.request_execution.executor import basic_request_context
 class TestRequestExecutorInitialization:
     """Tests for RequestExecutor initialization"""
 
-    def test_creates_with_transport(self):
+    def test_creates_with_transport_and_factories(self):
         """
-        GIVEN a transport engine
+        GIVEN a transport engine and middleware factories
         WHEN RequestExecutor is created
         THEN it should initialize successfully
         """
@@ -27,70 +27,27 @@ class TestRequestExecutorInitialization:
             TransportResponse(status=200, headers=None, body=None)
         )
 
-        client = RequestExecutor(transport)
+        client = RequestExecutor(transport, middleware_factories=[])
 
         assert client.transport is transport
-        assert client._pipeline is not None
 
-    def test_middleware_pipeline_is_empty_initially(self):
+    def test_stores_middleware_factories(self):
         """
-        GIVEN a new RequestExecutor
-        WHEN no middleware has been added
-        THEN pipeline should be empty
-        """
-        transport = FakeTransportEngine(
-            TransportResponse(status=200, headers=None, body=None)
-        )
-
-        client = RequestExecutor(transport)
-
-        assert len(client._pipeline._middleware_list) == 0
-
-
-@pytest.mark.unit
-@pytest.mark.middleware
-class TestRequestExecutorMiddlewareManagement:
-    """Tests for adding middleware to RequestExecutor"""
-
-    def test_add_middleware_registers_in_pipeline(self):
-        """
-        GIVEN an RequestExecutor
-        WHEN add_middleware is called
-        THEN middleware should be added to pipeline
+        GIVEN middleware factories
+        WHEN RequestExecutor is created
+        THEN factories should be stored
         """
         transport = FakeTransportEngine(
             TransportResponse(status=200, headers=None, body=None)
         )
-        client = RequestExecutor(transport)
 
         async def dummy_mw(req, next_call):
             return await next_call(req)
 
-        client.add_middleware(dummy_mw)
+        factories = [lambda: dummy_mw]
+        client = RequestExecutor(transport, middleware_factories=factories)
 
-        assert len(client._pipeline._middleware_list) == 1
-
-    def test_add_multiple_middleware(self):
-        """
-        GIVEN an RequestExecutor
-        WHEN multiple middleware are added
-        THEN all should be registered
-        """
-        transport = FakeTransportEngine(
-            TransportResponse(status=200, headers=None, body=None)
-        )
-        client = RequestExecutor(transport)
-
-        async def mw1(req, next_call):
-            return await next_call(req)
-
-        async def mw2(req, next_call):
-            return await next_call(req)
-
-        client.add_middleware(mw1)
-        client.add_middleware(mw2)
-
-        assert len(client._pipeline._middleware_list) == 2
+        assert client._middleware_factories is factories
 
 
 @pytest.mark.unit
@@ -101,7 +58,7 @@ class TestRequestExecutorSend:
 
     async def test_send_executes_transport(self):
         """
-        GIVEN an RequestExecutor with transport
+        GIVEN a RequestExecutor with transport
         WHEN send is called
         THEN transport should execute the request
         """
@@ -112,7 +69,7 @@ class TestRequestExecutorSend:
                 body=b'{"ok": true}',
             )
         )
-        client = RequestExecutor(transport)
+        client = RequestExecutor(transport, middleware_factories=[])
 
         ctx = RequestContext(
             method=RequestType.GET,
@@ -128,14 +85,13 @@ class TestRequestExecutorSend:
 
     async def test_send_runs_middleware_pipeline(self):
         """
-        GIVEN an RequestExecutor with middleware
+        GIVEN a RequestExecutor with middleware factories
         WHEN send is called
         THEN middleware should execute
         """
         transport = FakeTransportEngine(
             TransportResponse(status=200, headers=None, body=None)
         )
-        client = RequestExecutor(transport)
 
         executed = []
 
@@ -143,7 +99,9 @@ class TestRequestExecutorSend:
             executed.append(True)
             return await next_call(req)
 
-        client.add_middleware(tracking_mw)
+        client = RequestExecutor(
+            transport, middleware_factories=[lambda: tracking_mw]
+        )
 
         ctx = RequestContext(
             method=RequestType.GET,
@@ -155,16 +113,50 @@ class TestRequestExecutorSend:
 
         assert len(executed) == 1
 
+    async def test_send_runs_multiple_middleware(self):
+        """
+        GIVEN a RequestExecutor with multiple middleware factories
+        WHEN send is called
+        THEN all middleware should execute
+        """
+        transport = FakeTransportEngine(
+            TransportResponse(status=200, headers=None, body=None)
+        )
+
+        executed = []
+
+        async def mw1(req, next_call):
+            executed.append("mw1")
+            return await next_call(req)
+
+        async def mw2(req, next_call):
+            executed.append("mw2")
+            return await next_call(req)
+
+        client = RequestExecutor(
+            transport, middleware_factories=[lambda: mw1, lambda: mw2]
+        )
+
+        ctx = RequestContext(
+            method=RequestType.GET,
+            url="/test",
+            headers={},
+        )
+
+        await client.send(ctx)
+
+        assert len(executed) == 2
+
     async def test_send_builds_transport_request_correctly(self):
         """
-        GIVEN an RequestExecutor
+        GIVEN a RequestExecutor
         WHEN send is called with RequestContext
         THEN TransportRequest should be built correctly
         """
         transport = FakeTransportEngine(
             TransportResponse(status=200, headers=None, body=None)
         )
-        client = RequestExecutor(transport)
+        client = RequestExecutor(transport, middleware_factories=[])
 
         ctx = RequestContext(
             method=RequestType.POST,
@@ -195,7 +187,7 @@ async def test_api_client_success_response():
         )
     )
 
-    client = RequestExecutor(transport)
+    client = RequestExecutor(transport, middleware_factories=[])
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -213,7 +205,7 @@ async def test_api_client_builds_transport_request_correctly():
         TransportResponse(status=200, headers=None, body=None)
     )
 
-    client = RequestExecutor(transport)
+    client = RequestExecutor(transport, middleware_factories=[])
     ctx = basic_request_context()
 
     await client.send(ctx)
@@ -235,7 +227,7 @@ async def test_api_client_sets_success_false_on_500():
         TransportResponse(status=500, headers=None, body=None)
     )
 
-    client = RequestExecutor(transport)
+    client = RequestExecutor(transport, middleware_factories=[])
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -255,7 +247,7 @@ async def test_api_client_transport_error():
         )
     )
 
-    client = RequestExecutor(transport)
+    client = RequestExecutor(transport, middleware_factories=[])
     ctx = basic_request_context()
 
     result = await client.send(ctx)
@@ -274,8 +266,7 @@ async def test_api_client_runs_middleware():
         TransportResponse(status=200, headers=None, body=None)
     )
 
-    client = RequestExecutor(transport)
-    client.add_middleware(mw)
+    client = RequestExecutor(transport, middleware_factories=[lambda: mw])
 
     ctx = basic_request_context()
     result = await client.send(ctx)
