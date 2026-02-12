@@ -24,13 +24,17 @@ class ApiPartitionExecutor(PartitionExecutor):
         transport_factory: Callable[[], TransportEngine],
         endpoint_factory: Callable[[], RequestContext],
         middleware_factories: list[Callable[[], MIDDLEWARE_FUNC]],
-        concurrency_limit: int = 10,
+        concurrency_limit: int = 20,
+        param_mapping: dict[str, str] | None = None,
+        transport_diagnostics: bool = False,
     ) -> None:
         # Serializable factories
         self._transport_factory = transport_factory
         self._endpoint_factory = endpoint_factory
         self._middleware_factories = middleware_factories
         self._concurrency_limit = concurrency_limit
+        self._param_mapping = param_mapping
+        self._transport_diagnostics = transport_diagnostics
 
         # Assign type but do not instantiate to ensure it's serializable
         self._resources: WorkerResourceManager | None = None
@@ -46,14 +50,23 @@ class ApiPartitionExecutor(PartitionExecutor):
         async def async_process_partition(
             rows: Iterable[Row],
         ) -> list[Row]:
+            middleware_factories = self._middleware_factories
+
             resources = self._get_resources()
 
             transport = await resources.get(
                 key=TransportEngine, factory=self._transport_factory
             )
 
-            executor = RequestExecutor(transport, self._middleware_factories)
-            concurrency_limit = self._concurrency_limit
+            if self._transport_diagnostics:
+                middleware_factories.append(
+                    lambda: TransportDiagnosticMiddleware(transport)
+                )
+
+            if self._param_mapping is not None:
+                middleware_factories.insert(0, lambda: ParamInjectorMiddleware())
+
+            executor = RequestExecutor(transport, middleware_factories)
             queue = asyncio.Queue()
 
             # Use a Producer/Consumer pattern to build a coroutine queue
@@ -63,7 +76,7 @@ class ApiPartitionExecutor(PartitionExecutor):
                     await queue.put(row)
 
                 # Signal completion to consumers
-                for _ in range(concurrency_limit):
+                for _ in range(self._concurrency_limit):
                     await queue.put(None)  # sentinel per consumer
 
             # Consumer: pulls from queue and processes row
@@ -76,10 +89,6 @@ class ApiPartitionExecutor(PartitionExecutor):
 
                     request_context = self._endpoint_factory()
                     request_context._row = row
-                    if request_context.param_mapping:
-                        request_context.params = {
-                            p: row[c] for p, c in request_context.param_mapping.items()
-                        }
 
                     request_exchange = await executor.send(request_context)
                     results.append((row, request_exchange))
@@ -89,7 +98,7 @@ class ApiPartitionExecutor(PartitionExecutor):
             # Launch producer + consumers
             producer_task = asyncio.create_task(producer())
             consumer_tasks = [
-                asyncio.create_task(consumer()) for _ in range(concurrency_limit)
+                asyncio.create_task(consumer()) for _ in range(self._concurrency_limit)
             ]
 
             await producer_task
