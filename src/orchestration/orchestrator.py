@@ -25,9 +25,9 @@ from config.factories import (
     MiddlewareRuntimeFactory,
 )
 from auth.strategy import AuthRuntime, AuthStrategyFactory
-from pipeline.partition_executor import ApiPartitionExecutor
-from pipeline.batch_handler import ApiBatchHandler
-from pipeline.batch_processor import BatchProcessor
+from orchestration.partition_executor import ApiPartitionExecutor
+from orchestration.batch_handler import ApiBatchHandler
+from orchestration.batch_processor import BatchProcessor
 
 
 class PipelineOrchestrator:

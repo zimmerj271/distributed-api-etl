@@ -8,7 +8,7 @@ from request_execution.middleware.pipeline import MIDDLEWARE_FUNC
 from request_execution.middleware.listeners import TransportDiagnosticMiddleware
 from request_execution.middleware.interceptors import ParamInjectorMiddleware
 from request_execution.transport.base import TransportEngine
-from pipeline.base import PartitionExecutor
+from orchestration.base import PartitionExecutor
 from request_execution.executor import RequestExecutor
 
 

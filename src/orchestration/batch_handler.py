@@ -1,7 +1,7 @@
 import logging 
 from pyspark.sql import types as T, SparkSession, DataFrame
 
-from pipeline.base import BatchHandler, PartitionExecutor
+from orchestration.base import BatchHandler, PartitionExecutor
 
 
 class ApiBatchHandler(BatchHandler):

@@ -7,7 +7,7 @@ import json
 from aiohttp import web
 from pyspark.sql import Row
 
-from pipeline.partition_executor import ApiPartitionExecutor
+from orchestration.partition_executor import ApiPartitionExecutor
 from request_execution.models import RequestContext, RequestType
 from request_execution.transport.engine import AiohttpEngine
 from request_execution.middleware.interceptors import JsonResponseMiddleware

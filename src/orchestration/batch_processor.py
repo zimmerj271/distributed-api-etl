@@ -1,7 +1,7 @@
 import logging
 from math import ceil
 from pyspark.sql import functions as F, DataFrame, SparkSession 
-from pipeline.base import BatchHandler
+from orchestration.base import BatchHandler
 
 
 class BatchProcessor:

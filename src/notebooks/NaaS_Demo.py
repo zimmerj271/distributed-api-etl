@@ -11,7 +11,7 @@ if str(project_root) not in sys.path:
 # COMMAND ----------
 
 from pyspark.sql import functions as F
-from pipeline.orchestrator import run_pipeline
+from orchestration.orchestrator import run_pipeline
 
 # COMMAND ----------
 
