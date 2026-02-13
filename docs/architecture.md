@@ -14,77 +14,57 @@ The framework is designed around three distinct layers:
 
 ## Pipeline Flow
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DRIVER SIDE                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                  │
-│  │  YAML/JSON   │───▶│  Preprocess  │───▶│   Pydantic   │                  │
-│  │   Config     │    │   Secrets    │    │  Validation  │                  │
-│  └──────────────┘    └──────────────┘    └──────┬───────┘                  │
-│                                                  │                          │
-│                                                  ▼                          │
-│                                        ┌──────────────────┐                 │
-│                                        │ Runtime Factories │                │
-│                                        │  • Transport      │                │
-│                                        │  • Auth           │                │
-│                                        │  • Middleware     │                │
-│                                        └────────┬─────────┘                 │
-│                                                 │                           │
-│  ┌──────────────┐                              │                           │
-│  │ Source Table │                              │                           │
-│  │  or DataFrame│───────────────────┐          │                           │
-│  └──────────────┘                   │          │                           │
-│                                     ▼          ▼                           │
-│                            ┌─────────────────────────┐                     │
-│                            │     Repartition &       │                     │
-│                            │  Serialize to Workers   │                     │
-│                            └───────────┬─────────────┘                     │
-│                                        │                                    │
-└────────────────────────────────────────┼────────────────────────────────────┘
-                                         │
-                    ┌────────────────────┼────────────────────┐
-                    │                    │                    │
-                    ▼                    ▼                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             WORKER SIDE                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                │
-│   │ Partition 1 │      │ Partition 2 │      │ Partition N │                │
-│   └──────┬──────┘      └──────┬──────┘      └──────┬──────┘                │
-│          │                    │                    │                        │
-│          ▼                    ▼                    ▼                        │
-│   ┌─────────────────────────────────────────────────────────┐              │
-│   │              ApiPartitionExecutor                        │              │
-│   │  ┌─────────────────────────────────────────────────┐    │              │
-│   │  │  For each row:                                   │    │              │
-│   │  │   1. Build request from template                 │    │              │
-│   │  │   2. Apply middleware chain                      │    │              │
-│   │  │   3. Send HTTP request via Transport             │    │              │
-│   │  │   4. Collect response                            │    │              │
-│   │  └─────────────────────────────────────────────────┘    │              │
-│   └─────────────────────────────────────────────────────────┘              │
-│          │                    │                    │                        │
-│          ▼                    ▼                    ▼                        │
-│   ┌─────────────────────────────────────────────────────────┐              │
-│   │                  Response Records                        │              │
-│   └─────────────────────────────────────────────────────────┘              │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                         │
-                                         ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              DRIVER SIDE                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│                       ┌───────────────────────┐                             │
-│                       │   Collect Results     │                             │
-│                       │   Write to Sink Table │                             │
-│                       └───────────────────────┘                             │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph driver1["DRIVER SIDE"]
+        direction TB
+        config["YAML/JSON<br/>Config"]
+        preprocess["Preprocess<br/>Secrets"]
+        validation["Pydantic<br/>Validation"]
+        factories["Runtime Factories<br/>• Transport<br/>• Auth<br/>• Middleware<br/>• Request Context"]
+        source["Source Table<br/>or DataFrame"]
+        repartition["Repartition &<br/>Serialize to Workers"]
+        
+        config --> preprocess --> validation --> factories
+        source --> repartition
+        factories --> repartition
+    end
+    
+    subgraph workers["WORKER SIDE"]
+        direction TB
+        subgraph partitions[" "]
+            direction LR
+            p1["Partition 1"]
+            p2["Partition 2"]
+            pn["Partition N"]
+        end
+        
+        executor["ApiPartitionExecutor<br/>For each row:<br/>1. Build request from template<br/>2. Apply middleware chain<br/>3. Send HTTP request via Transport<br/>4. Collect response"]
+        
+        responses["Response Records"]
+        p1 -.-> executor
+        p2 -.-> executor
+        pn -.-> executor
+        executor --> responses
+    end
+    
+    subgraph driver2["DRIVER SIDE"]
+        direction TB
+        collect["Collect Results<br/>Write to Sink Table"]
+    end
+    
+    repartition -.->|distribute| p1
+    repartition -.->|distribute| p2
+    repartition -.->|distribute| pn
+    responses --> collect
+    
+    style driver1 fill:#1168bd,stroke:#0d4884,color:#fff
+    style workers fill:#6c757d,stroke:#495057,color:#fff
+    style driver2 fill:#1168bd,stroke:#0d4884,color:#fff
+    style partitions fill:none,stroke:none
+    style executor fill:#28a745,stroke:#1e7e34,color:#fff
+    style responses fill:#17a2b8,stroke:#117a8b,color:#fff
+    style repartition fill:#dc3545,stroke:#bd2130,color:#fff
 ```
 
 ## Worker-Side Execution Detail
