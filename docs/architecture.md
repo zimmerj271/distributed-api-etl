@@ -14,6 +14,8 @@ The framework is designed around three distinct layers:
 
 ## Pipeline Flow
 
+### Driver-Side Execution
+
 ```mermaid
 flowchart TB
     subgraph driver1["DRIVER SIDE"]
@@ -67,7 +69,7 @@ flowchart TB
     style repartition fill:#dc3545,stroke:#bd2130,color:#fff
 ```
 
-## Worker-Side Execution Detail
+### Worker-Side Execution
 
 Each Spark partition executes the following flow:
 
@@ -128,7 +130,172 @@ flowchart TB
     style response fill:#dc3545,stroke:#bd2130,color:#fff
 ```
 
-## Middleware Execution Order
+## Concurrent Request Processing
+
+The `ApiPartitionExecutor` uses an **asyncio producer-consumer pattern** with bounded concurrency to process partition rows in parallel, rather than sequentially.
+
+### Architecture Overview
+The following diagram shows the structural components and data flow:
+```mermaid
+flowchart TB
+    rows["Iterable[Row]<br/>(Partition Input)"]
+    output["list[Row]"]
+
+    subgraph partition["Partition Execution"]
+        direction TB
+
+        subgraph pattern["Producer/Consumer Pattern"]
+            direction TB
+            
+            producer["🔄 Producer Coroutines:<br/>await queue.put(row)Send N sentinels (None)"]
+            
+            queue["asyncio.Queue<br>• Bounded backpressure<br>• FIFO ordering<br>• Async-safe"]
+            
+            subgraph consumers["Consumer Pool"]
+                direction LR
+                c1["Consumer 1"]
+                c2["Consumer 2"]
+                c3["Consumer ..."]
+                c20["Consumer N"]
+            end
+            
+            producer --> queue
+            queue --> consumers
+        end
+        
+        subgraph processing["Each Consumer Loop"]
+            direction TB
+            pull["row = await queue.get()"]
+            check{"row is None?<br>(sentinel)"}
+            build["Build RequestContext"]
+            execute["await executor.send()"]
+            collect["Collect (row, response)"]
+            
+            pull --> check
+            check -->|No| build --> execute --> collect
+            collect -.->|loop| pull
+            check -->|Yes| done["Break & Return Results"]
+        end
+        
+        gather["await asyncio.gather()<br>Collect all consumer results"]
+        flatten["Flatten & Build<br>Output Rows"]
+        
+        
+        consumers -.->|"each run"| processing
+        processing --> gather
+        gather --> flatten
+    end
+
+    
+    rows --> producer
+    flatten --> output
+    
+    style partition fill:#6c757d,stroke:#495057,color:#fff
+    style pattern fill:#1168bd,stroke:#0d4884,color:#fff
+    style producer fill:#28a745,stroke:#1e7e34,color:#fff
+    style queue fill:#17a2b8,stroke:#117a8b,color:#fff
+    style consumers fill:#20c997,stroke:#17a673,color:#fff
+    style c1 fill:#138496,stroke:#0c5460,color:#fff
+    style c2 fill:#138496,stroke:#0c5460,color:#fff
+    style c3 fill:#138496,stroke:#0c5460,color:#fff
+    style c20 fill:#138496,stroke:#0c5460,color:#fff
+    style processing fill:#28a745,stroke:#1e7e34,color:#fff
+    style gather fill:#dc3545,stroke:#bd2130,color:#fff
+```
+**Key Components:**
+
+- **Producer**: Feeds rows from the partition iterator into the queue, then sends sentinel values (`None`) to signal completion
+- **Queue**: Provides backpressure and ensures thread-safe communication between producer and consumers
+- **Consumer Pool**: `concurrency_limit` (default 20) concurrent workers that pull rows, execute requests, and collect responses
+- **Gather**: Waits for all consumers to complete and combines their results
+
+### Row Processing Execution Timeline
+
+The following sequence diagram shows how these components interact over time:
+```mermaid
+sequenceDiagram
+    participant Spark as Spark Worker
+    participant Sync as sync_process_partition
+    participant Async as async_process_partition
+    participant Prod as Producer
+    participant Q as asyncio.Queue
+    participant C1 as Consumer 1
+    participant C2 as Consumer 2
+    participant CN as Consumer N
+    participant API as HTTP APIs
+    
+    Spark->>Sync: mapPartitions(rows)
+    Sync->>Async: asyncio.run()
+    
+    Async->>Prod: create_task(producer())
+    Async->>C1: create_task(consumer())
+    Async->>C2: create_task(consumer())
+    Async->>CN: create_task(consumer())
+    
+    Note over Prod,CN: All tasks run concurrently
+    
+    par Producer feeds queue
+        loop For each row
+            Prod->>Q: put(row)
+        end
+        loop Send sentinels
+            Prod->>Q: put(None) × N
+        end
+    and Consumer 1 processes
+        loop Until sentinel
+            C1->>Q: get()
+            Q-->>C1: row
+            C1->>API: HTTP request
+            API-->>C1: response
+            C1->>C1: collect result
+        end
+    and Consumer 2 processes
+        loop Until sentinel
+            C2->>Q: get()
+            Q-->>C2: row
+            C2->>API: HTTP request
+            API-->>C2: response
+            C2->>C2: collect result
+        end
+    and Consumer N processes
+        loop Until sentinel
+            CN->>Q: get()
+            Q-->>CN: row
+            CN->>API: HTTP request
+            API-->>CN: response
+            CN->>CN: collect result
+        end
+    end
+    
+    Async->>Async: gather(all results)
+    Async->>Async: flatten & build rows
+    Async-->>Sync: list[Row]
+    Sync-->>Spark: return results
+```
+
+**Execution Flow:**
+
+1. **Initialization**: Spark calls the synchronous wrapper which starts the async event loop
+2. **Task Creation**: Producer and N consumer tasks are created and scheduled concurrently
+3. **Parallel Execution**: 
+   - Producer feeds rows into the queue as fast as consumers can process
+   - Consumers pull rows, make HTTP requests, and collect responses independently
+   - The queue provides natural backpressure when consumers are slower than the producer
+4. **Completion**: Producer sends sentinel values; consumers exit when they receive sentinels
+5. **Collection**: All consumer results are gathered, flattened, and returned to Spark
+
+### Performance Benefits
+
+With `concurrency_limit=20`, a partition of 1000 rows can process up to 20 HTTP requests simultaneously rather than sequentially. This can result in **10-20x throughput improvement** for I/O-bound API calls, with the actual speedup depending on:
+
+- API response times
+- Network latency
+- Rate limits on the target API
+- Available system resources
+
+The concurrency limit prevents overwhelming the target API while maximizing throughput within safe bounds.
+
+## Middleware Pipeline and Execution
 
 Middleware is executed in the order it is configured, wrapping each subsequent middleware:
 
