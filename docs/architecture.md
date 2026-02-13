@@ -71,80 +71,97 @@ flowchart TB
 
 Each Spark partition executes the following flow:
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        PARTITION EXECUTION                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────┐                                                          │
-│  │   Row Data   │                                                          │
-│  └──────┬───────┘                                                          │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                      REQUEST TEMPLATE                                 │  │
-│  │   • Base URL + Path                                                   │  │
-│  │   • Headers (Accept, Content-Type)                                    │  │
-│  │   • Method (GET, POST, etc.)                                          │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                      MIDDLEWARE CHAIN                                 │  │
-│  │                                                                       │  │
-│  │   ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐  │  │
-│  │   │   Auth     │──▶│   Retry    │──▶│  Logging   │──▶│   Timing   │  │  │
-│  │   │ Injection  │   │   Logic    │   │            │   │            │  │  │
-│  │   └────────────┘   └────────────┘   └────────────┘   └────────────┘  │  │
-│  │                                                                       │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                         TRANSPORT                                     │  │
-│  │                                                                       │  │
-│  │   ┌─────────────────────────────────────────────────────────────┐    │  │
-│  │   │  aiohttp Session (process-scoped, connection pooled)        │    │  │
-│  │   │                                                              │    │  │
-│  │   │   • TCP Connection Pool                                      │    │  │
-│  │   │   • TLS Session Reuse                                        │    │  │
-│  │   │   • DNS Caching                                              │    │  │
-│  │   └─────────────────────────────────────────────────────────────┘    │  │
-│  │                                                                       │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│         │                                                                   │
-│         ▼                                                                   │
-│  ┌──────────────┐                                                          │
-│  │   Response   │ ──▶  status_code, headers, body, timing, metadata        │
-│  └──────────────┘                                                          │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph partition["PARTITION EXECUTION"]
+        direction TB
+        
+        rowin["Input Row Data"]
+        rowout["Ouput Row Data"]
+        
+        template["REQUEST TEMPLATE<br/><br/>• Endpoint URL<br/>• Headers (Accept, Content-Type)<br/>• Method (GET, POST, etc.)"]
+        
+        subgraph middleware1["MIDDLEWARE CHAIN"]
+            direction LR
+            M11["M1"]
+            M21["M2"]
+            M31["M3"]
+            MN1["Mn"]
+
+            M11 --> M21 --> M31 -.-> MN1
+        end
+        
+        subgraph transport["TRANSPORT"]
+            direction TB
+            session["aiohttp Session (process-scoped, connection pooled)<br/><br/>• TCP Connection Pool<br/>• TLS Session Reuse<br/>• DNS Caching"]
+        end
+        
+        response["Response"]
+
+        subgraph middleware2["MIDDLEWARE CHAIN"]
+            direction LR
+            M12["M1"]
+            M22["M2"]
+            M32["M3"]
+            MN2["Mn"]
+
+            MN2 -.-> M32 --> M22 --> M12
+        end
+        
+        rowin --> template --> middleware1 --> transport --> response --> middleware2 --> rowout
+    end
+    
+    style partition fill:#6c757d,stroke:#495057,color:#fff
+    style template fill:#1168bd,stroke:#0d4884,color:#fff
+    style middleware1 fill:#28a745,stroke:#1e7e34,color:#fff
+    style M11 fill:#20c997,stroke:#17a673,color:#fff
+    style M21 fill:#20c997,stroke:#17a673,color:#fff
+    style M31 fill:#20c997,stroke:#17a673,color:#fff
+    style MN1 fill:#20c997,stroke:#17a673,color:#fff
+    style middleware2 fill:#28a745,stroke:#1e7e34,color:#fff
+    style M12 fill:#20c997,stroke:#17a673,color:#fff
+    style M22 fill:#20c997,stroke:#17a673,color:#fff
+    style M32 fill:#20c997,stroke:#17a673,color:#fff
+    style MN2 fill:#20c997,stroke:#17a673,color:#fff
+    style transport fill:#17a2b8,stroke:#117a8b,color:#fff
+    style session fill:#138496,stroke:#0c5460,color:#fff
+    style response fill:#dc3545,stroke:#bd2130,color:#fff
 ```
 
 ## Middleware Execution Order
 
 Middleware is executed in the order it is configured, wrapping each subsequent middleware:
 
-```
-                    ┌─────────────────────────────────────┐
-  Request ─────────▶│           Middleware A              │
-                    │  ┌───────────────────────────────┐  │
-                    │  │        Middleware B           │  │
-                    │  │  ┌─────────────────────────┐  │  │
-                    │  │  │     Middleware C        │  │  │
-                    │  │  │  ┌───────────────────┐  │  │  │
-                    │  │  │  │   HTTP Request    │  │  │  │
-                    │  │  │  │    (Transport)    │  │  │  │
-                    │  │  │  └─────────┬─────────┘  │  │  │
-                    │  │  │            │            │  │  │
-                    │  │  │  ┌─────────▼─────────┐  │  │  │
-                    │  │  │  │   HTTP Response   │  │  │  │
-                    │  │  │  └───────────────────┘  │  │  │
-                    │  │  └─────────────────────────┘  │  │
-                    │  └───────────────────────────────┘  │
-                    └──────────────────┬──────────────────┘
-                                       │
-  Response ◀───────────────────────────┘
+```mermaid
+flowchart TB
+    request["Request"]
+    
+    subgraph mw_a["Middleware A"]
+        direction TB
+        subgraph mw_b["Middleware B"]
+            direction TB
+            subgraph mw_c["Middleware C"]
+                direction TB
+                http_req["HTTP Request"]
+                http_resp["HTTP Response"]
+                
+                http_req --> http_resp
+            end
+        end
+    end
+    
+    response["Response"]
+    
+    request --> mw_a
+    mw_a --> response
+    
+    style mw_a fill:#28a745,stroke:#1e7e34,color:#fff
+    style mw_b fill:#20c997,stroke:#17a673,color:#fff
+    style mw_c fill:#17a2b8,stroke:#117a8b,color:#fff
+    style http_req fill:#1168bd,stroke:#0d4884,color:#fff
+    style http_resp fill:#dc3545,stroke:#bd2130,color:#fff
+    style request fill:#6c757d,stroke:#495057,color:#fff
+    style response fill:#6c757d,stroke:#495057,color:#fff
 ```
 
 This allows middleware to run logic **before and/or after** the HTTP request.
