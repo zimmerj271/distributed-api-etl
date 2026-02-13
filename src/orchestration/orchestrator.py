@@ -25,9 +25,9 @@ from config.factories import (
     MiddlewareRuntimeFactory,
 )
 from auth.strategy import AuthRuntime, AuthStrategyFactory
-from pipeline.partition_executor import ApiPartitionExecutor
-from pipeline.batch_handler import ApiBatchHandler
-from pipeline.batch_processor import BatchProcessor
+from orchestration.partition_executor import ApiPartitionExecutor
+from orchestration.batch_handler import ApiBatchHandler
+from orchestration.batch_processor import BatchProcessor
 
 
 class PipelineOrchestrator:
@@ -49,6 +49,7 @@ class PipelineOrchestrator:
         self._execution_config: ExecutionConfig = pipeline_configs.execution
         self.source_df = source_df
         self.source_id = source_id
+        self.transport_diagnostics = pipeline_configs.transport.diagnostics
 
         self._table_manager = TableManager(spark=spark)
         self._logger = logging.getLogger(f"[{self.__class__.__name__}]")
@@ -214,6 +215,9 @@ class PipelineOrchestrator:
             transport_factory=self._transport_factory,
             endpoint_factory=self._endpoint_factory,
             middleware_factories=self._middleware_factories,
+            concurrency_limit=self._execution_config.max_concurrent_requests,
+            param_mapping=self._tables_config.get_request_mapping().param,
+            transport_diagnostics=self.transport_diagnostics,
         )
 
         handler = ApiBatchHandler(

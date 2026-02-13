@@ -124,10 +124,14 @@ class TestMiddlewareChainOrder:
                 return result
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(OrderTrackingMiddleware("first"))
-            executor.add_middleware(OrderTrackingMiddleware("second"))
-            executor.add_middleware(OrderTrackingMiddleware("third"))
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: OrderTrackingMiddleware("first"),
+                    lambda: OrderTrackingMiddleware("second"),
+                    lambda: OrderTrackingMiddleware("third"),
+                ],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -177,16 +181,17 @@ class TestRetryWithOtherMiddleware:
                 return await next_call(exchange)
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            # Retry wraps timing - timing should be called on each retry
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=5,
-                    retry_status_codes=[503],
-                    base_delay=0.01,
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: RetryMiddleware(
+                        max_attempts=5,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    ),
+                    lambda: TimingTracker(),
+                ],
             )
-            executor.add_middleware(TimingTracker())
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -218,14 +223,16 @@ class TestRetryWithOtherMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(LoggingMiddleware())
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=5,
-                    retry_status_codes=[503],
-                    base_delay=0.01,
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: LoggingMiddleware(),
+                    lambda: RetryMiddleware(
+                        max_attempts=5,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    ),
+                ],
             )
 
             context = RequestContext(
@@ -263,8 +270,12 @@ class TestAuthMiddlewareIntegration:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(HeaderAuthMiddleware("user", "pass"))
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: HeaderAuthMiddleware("user", "pass"),
+                ],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -307,15 +318,16 @@ class TestAuthMiddlewareIntegration:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            # Auth must be before retry so it's applied on each retry
-            executor.add_middleware(HeaderAuthMiddleware("user", "pass"))
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=5,
-                    retry_status_codes=[503],
-                    base_delay=0.01,
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: HeaderAuthMiddleware("user", "pass"),
+                    lambda: RetryMiddleware(
+                        max_attempts=5,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    ),
+                ],
             )
 
             context = RequestContext(
@@ -332,13 +344,13 @@ class TestAuthMiddlewareIntegration:
 @pytest.mark.integration
 @pytest.mark.middleware
 @pytest.mark.asyncio
-class TestParamInjectorMiddleware:
+class TestParamInjectorMiddlewareIntegration:
     """Tests for parameter injection from Spark rows"""
 
     async def test_injects_params_from_row(self, aiohttp_client, tcp_config):
         """
-        GIVEN ParamInjectorMiddleware with bindings
-        WHEN a request context has a Spark row
+        GIVEN ParamInjectorMiddleware
+        WHEN a request context has param_mapping and a Spark row
         THEN params should be injected from the row
         """
         app = create_test_app()
@@ -351,14 +363,17 @@ class TestParamInjectorMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(
-                ParamInjectorMiddleware({"patient_id": "pid", "encounter": "enc"})
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: ParamInjectorMiddleware(),
+                ],
             )
 
             context = RequestContext(
                 method=RequestType.GET,
                 url=f"{base_url}/api/echo",
+                param_mapping={"patient_id": "pid", "encounter": "enc"},
             )
             # Simulate a Spark row
             context._row = Row(pid="P123", enc="E456", other="ignored")
@@ -393,8 +408,10 @@ class TestTimingMiddlewareAccuracy:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(TimingMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[lambda: TimingMiddleware()],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -435,8 +452,10 @@ class TestWorkerIdentityMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(WorkerIdentityMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[lambda: WorkerIdentityMiddleware()],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -476,20 +495,20 @@ class TestFullMiddlewareStack:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-
-            # Add middleware in production order
-            executor.add_middleware(LoggingMiddleware())
-            executor.add_middleware(TimingMiddleware())
-            executor.add_middleware(WorkerIdentityMiddleware())
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=3,
-                    retry_status_codes=[503],
-                    base_delay=0.01,
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: LoggingMiddleware(),
+                    lambda: TimingMiddleware(),
+                    lambda: WorkerIdentityMiddleware(),
+                    lambda: RetryMiddleware(
+                        max_attempts=3,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    ),
+                    lambda: JsonResponseMiddleware(),
+                ],
             )
-            executor.add_middleware(JsonResponseMiddleware())
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -535,18 +554,19 @@ class TestFullMiddlewareStack:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-
-            executor.add_middleware(LoggingMiddleware())
-            executor.add_middleware(TimingMiddleware())
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=5,
-                    retry_status_codes=[503],
-                    base_delay=0.01,
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: LoggingMiddleware(),
+                    lambda: TimingMiddleware(),
+                    lambda: RetryMiddleware(
+                        max_attempts=5,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    ),
+                    lambda: JsonResponseMiddleware(),
+                ],
             )
-            executor.add_middleware(JsonResponseMiddleware())
 
             context = RequestContext(
                 method=RequestType.GET,

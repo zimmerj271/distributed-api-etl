@@ -96,7 +96,7 @@ class TestRequestExecutorBasicFlow:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -126,7 +126,7 @@ class TestRequestExecutorBasicFlow:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -155,7 +155,7 @@ class TestRequestExecutorBasicFlow:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.POST,
@@ -194,8 +194,10 @@ class TestRequestExecutorWithMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(JsonResponseMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[lambda: JsonResponseMiddleware()],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -224,8 +226,10 @@ class TestRequestExecutorWithMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(TimingMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[lambda: TimingMiddleware()],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -254,8 +258,10 @@ class TestRequestExecutorWithMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(LoggingMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[lambda: LoggingMiddleware()],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -287,13 +293,15 @@ class TestRequestExecutorWithMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(
-                RetryMiddleware(
-                    max_attempts=5,
-                    retry_status_codes=[503],
-                    base_delay=0.01,  # Fast retries for testing
-                )
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: RetryMiddleware(
+                        max_attempts=5,
+                        retry_status_codes=[503],
+                        base_delay=0.01,
+                    )
+                ],
             )
 
             context = RequestContext(
@@ -324,11 +332,14 @@ class TestRequestExecutorWithMiddleware:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            # Add middleware in order: logging -> timing -> json
-            executor.add_middleware(LoggingMiddleware())
-            executor.add_middleware(TimingMiddleware())
-            executor.add_middleware(JsonResponseMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: LoggingMiddleware(),
+                    lambda: TimingMiddleware(),
+                    lambda: JsonResponseMiddleware(),
+                ],
+            )
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -364,7 +375,7 @@ class TestRequestExecutorContextHandling:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -397,7 +408,7 @@ class TestRequestExecutorContextHandling:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -427,7 +438,7 @@ class TestRequestExecutorContextHandling:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
+            executor = RequestExecutor(transport=engine, middleware_factories=[])
 
             context = RequestContext(
                 method=RequestType.GET,
@@ -461,9 +472,13 @@ class TestRequestExecutorRowConversion:
         )
 
         async with engine:
-            executor = RequestExecutor(transport=engine)
-            executor.add_middleware(JsonResponseMiddleware())
-            executor.add_middleware(TimingMiddleware())
+            executor = RequestExecutor(
+                transport=engine,
+                middleware_factories=[
+                    lambda: JsonResponseMiddleware(),
+                    lambda: TimingMiddleware(),
+                ],
+            )
 
             full_url = f"{base_url}/api/success"
             context = RequestContext(

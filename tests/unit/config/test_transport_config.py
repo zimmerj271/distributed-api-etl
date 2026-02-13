@@ -8,3 +8,10 @@ def test_aiohttp_runtime_args(aiohttp_config):
     args = aiohttp_config.to_runtime_args()
     assert args["base_timeout"] == 30
     assert args["connector_config"].limit == 50
+
+
+@pytest.mark.unit
+@pytest.mark.config
+@pytest.mark.transport
+def test_aiohttp_diagnostics_default(aiohttp_config):
+    assert aiohttp_config.diagnostics is True
