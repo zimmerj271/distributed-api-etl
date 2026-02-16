@@ -1,16 +1,41 @@
 # Architecture
-
-This document describes the high-level architecture of the Spark API-Driven ETL Framework.
+This document describes the high-level architecture of the Spark API-Driven ETL Framework. 
 
 ## Overview
+Performing parallel and concurrent HTTP requests to RESTful API endpoints in Spark is not trivial due to challenges around managing distributed compute architecture. Most implementations use suboptimal approaches:
 
-The framework is designed around three distinct layers:
+* **Driver-only requests** — defeats Spark's parallelism and does not scale for large datasets
+* **Multithreading with `requests` library** — achieves concurrency but uses blocking I/O, substantially increasing time between requests
 
-| Layer   | Responsibility                    |
-| ------- | --------------------------------- |
-| Config  | Declarative pipeline definition   |
-| Control | Validation, wiring, orchestration |
-| Runtime | Executed on Spark workers         |
+This design maximizes API request throughput by layering concurrency at multiple levels:
+
+1) **Cluster-level parallelism**: Spark distributes partitions across worker nodes
+2) **Partition-level concurrency**: asyncio.Queue enables concurrent processing of multiple rows within each partition with backpressure control
+3) **Request-level concurrency**: aiohttp's non-blocking I/O allows the event loop to handle multiple in-flight HTTP requests simultaneously on each worker
+
+The framework supports common HTTP authentication mechanisms, including OAuth2.0 and mTLS. Request/response processing is handled through a **middleware layer** for payload transformation and a **transport layer** for HTTP execution.
+
+The framework is organized into three architectural layers:
+
+| Layer            | Responsibility                                                                 |
+| ---------------- | ------------------------------------------------------------------------------ |
+| Pipeline Config  | Declarative pipeline definition via YAML/JSON with Pydantic validation         |
+| Driver-side      | Orchestration, batching, driver-side authentication, and resource distribution |
+| Executor-side    | Concurrent request execution, middleware processing, worker-side authentication|
+
+#### When to Use This Framework
+
+This framework is ideal for:
+- **High-volume API ingestion**: Processing millions of records requiring individual API calls
+- **Rate-limited APIs**: Backpressure control prevents overwhelming API endpoints
+- **Long-running pipelines**: OAuth2 token refresh and session management for jobs exceeding token lifetimes
+- **Complex authentication**: Built-in support for OAuth2, mTLS, and custom auth patterns
+
+**Not recommended for:**
+- Systems with native Spark connectors (BigQuery, Snowflake, Kafka) - use the connector instead
+- APIs offering bulk export files (CSV/Parquet downloads) - download directly
+- Single-request extractions - Python `requests` library is simpler
+- APIs with per-second rate limits incompatible with any concurrency
 
 ## Pipeline Flow
 
