@@ -21,7 +21,7 @@ The framework is organized into three architectural layers:
 | ---------------- | ------------------------------------------------------------------------------ |
 | Pipeline Config  | Declarative pipeline definition via YAML/JSON with Pydantic validation         |
 | Driver-side      | Orchestration, batching, driver-side authentication, and resource distribution |
-| Executor-side    | Concurrent request execution, middleware processing, worker-side authentication|
+| Worker-side    | Concurrent request execution, middleware processing, worker-side authentication|
 
 ### Batch Processing and Idempotency
 
@@ -155,7 +155,7 @@ flowchart TB
     style checkpoint fill:#e67e22,stroke:#d35400,color:#fff
 ```
 
-### Driver-Side Execution
+### Driver-Side Orchestration
 
 ```mermaid
 flowchart TB
@@ -287,9 +287,19 @@ flowchart TB
 
 ## Concurrent Request Processing
 
-The `ApiPartitionExecutor` uses an **asyncio producer-consumer pattern** with bounded concurrency to process partition rows in parallel, rather than sequentially.
+The `ApiPartitionExecutor` implements an **asyncio producer-consumer pattern with a bounded task queue** to manage concurrent HTTP requests within each Spark partition.
 
-### Row-level concurrency
+A single producer coroutine reads rows from the partition and enqueues them into an `asyncio.Queue`. A pool of consumer coroutines (sized by `concurrency_limit`) pull rows from the queue and execute requests concurrently. The queue's bounded capacity (`maxsize = concurrency_limit * 2`) provides backpressure: if consumers fall behind, the producer blocks until queue space becomes available, preventing unbounded memory growth.
+
+This design enforces three critical properties:
+
+1. **Bounded concurrency**: At most `concurrency_limit` requests are in-flight simultaneously, preventing resource exhaustion and avoiding overwhelming the downstream API
+2. **Incremental completion**: Results are yielded as soon as each request completes, rather than waiting for an entire batch or maintaining submission order
+3. **Pipeline saturation**: As soon as a consumer finishes processing one row, it immediately pulls the next from the queue, keeping all workers busy without artificial delays
+
+The queue acts as a buffer that decouples the rate of row production from the rate of HTTP completion, allowing the event loop to efficiently multiplex I/O across all in-flight requests.
+
+### Row-level Concurrency Diagram
 The following diagram shows the structural components and data flow:
 ```mermaid
 flowchart TB
@@ -361,7 +371,7 @@ flowchart TB
 
 - **Producer**: Feeds rows from the partition iterator into the queue, then sends sentinel values (`None`) to signal completion
 - **Queue**: Provides backpressure and ensures thread-safe communication between producer and consumers
-- **Consumer Pool**: `concurrency_limit` (default 20) concurrent workers that pull rows, execute requests, and collect responses
+- **Consumer Pool**: `concurrency_limit` concurrent workers that pull rows, execute requests, and collect responses
 - **Gather**: Waits for all consumers to complete and combines their results
 
 ### Row Processing Execution Timeline
