@@ -426,99 +426,123 @@ With `concurrency_limit=20`, a partition of 1000 rows can process up to 20 HTTP 
 The concurrency limit prevents overwhelming the target API while maximizing throughput within safe bounds.
 
 
-## Async `aiohttp` vs Multithreaded `request`
+## Async `aiohttp` vs Multithreaded `requests`
 
-In many distributed HTTP request Spark applications, concurrency is achieved on the Spark worker by pairing multithreading with the `requests` library. However, because the `request` library is synchronous, it creates an I/O blocking condition during each request in which subsequent requests are required to wait until the current process has been completed. I/O blocking causes two unintended problems with this implementation: 
+In many distributed HTTP ingestion pipelines built on Spark, concurrency within a
+worker task is achieved by pairing `ThreadPoolExecutor` with the `requests` library.
+This approach works, but it comes with compounding costs that become significant at
+cluster scale.
 
-1) thread blocking I/O prevents all other threads from staging the request, forcing iterative processing when concurrent processing is intended
-2) adds overhead by the OS due to context switching between threads.
+### Blocking vs Non-Blocking I/O
 
-A multithreaded `requests` design performs the following operations:
-1) Each thread is assigned an available connection from the connection pool. Unassigned threads wait for a connection in the pool to become available.
-2) The active thread blocks the I/O while waiting for an HTTP response.
-3) Once the thread receives the response, the I/O is unblocked and the OS must contextually switch to the next thread that has an assigned connection.
+`requests` is a synchronous library. When a thread calls `requests.get()` or
+`requests.post()`, it issues a blocking system call and suspends until the OS
+delivers the network response. During this waiting period, the thread is not doing any 
+useful work; it is simply occupying memory and a slot in the OS scheduler. Other threads
+can still run and issue their own requests during this time, which is how concurrency
+is achieved, but each in-flight request must hold an OS thread for its entire
+duration: connection establishment, request transmission, server processing time, and
+response receipt.
 
-In contrast, the `aiohttp` library allows for asynchronous, single threaded, non-blocking I/O processes:
-1) Coroutines are assigned available connections from the connection pool.
-2) a coroutine makes a request and yields while waiting for the HTTP response, it does not block the I/O for other coroutines.
-3) The event loop switches between coroutines without OS context switching -- coroutines switching is handled by the python application.
+`aiohttp` is built on non-blocking sockets and Python's `asyncio` event loop. Rather
+than suspending an OS thread, a coroutine calling `await session.get()` registers
+interest in the socket with the event loop and immediately yields control. The single
+event loop thread is then free to drive other coroutines forward — issuing new
+requests, processing completed responses, all without any additional threads. When the OS
+signals that data has arrived on a socket, the event loop resumes the appropriate
+coroutine from exactly where it yielded. Coroutine switching is a function call in
+user space and carries none of the overhead of an OS context switch.
 
-In a standard application, the overhead introduced by multithreading is relatively small so there is no significant benefit to using `aiohttp` over `requests`. Howeer, in the context of a Spark cluster, where the number of Python processes scale with the number of CPUs assigned to the node, the added latency due to context switching between threads can be substantially large.
+### Sequential Walkthrough: One Request Lifecycle
 
+#### `requests` + `ThreadPoolExecutor`
 
-```mermaid
-flowchart TB
-  %% Async aiohttp design on ONE Spark worker node
-  %% N = concurrent task slots (cores)
-  %% M = coroutine concurrency per task (consumers)
+1. `ThreadPoolExecutor` assigns the row to an available thread from the pool
+2. The thread constructs the HTTP request (headers, body, URL)
+3. The thread calls `requests.get()`, which calls the OS `send()` system call
+4. The OS transmits the request and marks the thread as **blocked**, waiting on the socket
+5. The OS context switches to another thread — saving and restoring CPU registers,
+   flushing pipeline state
+6. Eventually the server responds; the OS receives data on the socket and marks the
+   thread as **runnable** again
+7. The OS schedules the thread back onto a CPU core (another context switch)
+8. The thread reads the response body, parses it, and returns the result
+9. The thread returns to the pool, available for the next row
 
-  %% ---------- Styling (hex colors for GitHub Mermaid) ----------
-  %% Use light fills + strong strokes; generally readable in light/dark themes.
-  classDef spark   fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#111111;
-  classDef process fill:#ECFDF5,stroke:#10B981,stroke-width:2px,color:#111111;
-  classDef asyncio fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#111111;
-  classDef queue   fill:#FFFBEB,stroke:#EAB308,stroke-width:2px,color:#111111;
-  classDef coro    fill:#FFF1F2,stroke:#E11D48,stroke-width:2px,color:#111111;
-  classDef http    fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#111111;
-  classDef api     fill:#F1F5F9,stroke:#64748B,stroke-width:2px,color:#111111;
+At step 4, the thread is suspended but still consumes its full stack allocation. 
+Thread stacks typically reserve several MB of virtual address space per thread
+(~8MB is common on Linux). While not all of this becomes resident immediately,
+160 threads per worker node still create substantial memory overhead that reduces
+the pool available to Spark for execution and caching.
 
-  %% ---------- Diagram ----------
-  subgraph Node["Spark Worker Node (VM)"]
-    direction TB
-    Spark["Spark Executor(s) on node\nTotal task slots = N (cores)"]:::spark
+Step 5 involves saving and restoring CPU registers, updating memory mapping tables, 
+and flushing cached state (a process that takes microseconds per switch, compared to 
+the sub-microsecond cost of switching between coroutines in user space).
 
-    subgraph Slots["Concurrent Task Slots (N)"]
-      direction LR
+At step 6, if many requests complete around the same time,
+many threads transition from blocked to runnable simultaneously. The OS must schedule
+all of them, causing a burst of context switches and a spike in CPU scheduler activity.
+This *thundering herd* effect can produce uneven request pacing and momentary latency
+spikes downstream.
 
-      subgraph Task1["Task Slot 1 → Python Worker Process 1"]
-        direction TB
-        TaskProc1["Python worker process"]:::process
-        Loop1["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
-        P1["Producer coroutine<br>(enqueue rows)"]:::coro
-        Q1["asyncio.Queue<br>(rows / backpressure)"]:::queue
-        C1["M Consumer coroutines<br>(concurrency = M)"]:::coro
-        S1["aiohttp.ClientSession<br>(conn pool + non-blocking sockets)"]:::http
+#### `aiohttp` + `asyncio`
 
-        TaskProc1 --> Loop1 --> P1 --> Q1 --> C1 --> S1
-      end
+1. The producer coroutine places a row onto the `asyncio.Queue`
+2. A consumer coroutine dequeues the row and constructs the HTTP request
+3. The coroutine calls `await session.get()`, which registers the socket with the
+   event loop's I/O selector (e.g., `epoll` on Linux) and **yields control**
+4. The event loop immediately picks up another ready coroutine — no OS call, no
+   register save, no cache flush (~100ns)
+5. The OS monitors all registered sockets with a single `epoll_wait()` system call
+6. When the server responds, `epoll` notifies the event loop
+7. The event loop resumes the coroutine from exactly where it yielded
+8. The coroutine reads the response body, parses it, and places the result in the
+   output list
+9. The coroutine loops back to dequeue the next row
 
-      subgraph Task2["Task Slot 2 → Python Worker Process 2"]
-        direction TB
-        TaskProc2["Python worker process"]:::process
-        Loop2["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
-        P2["Producer coroutine"]:::coro
-        Q2["asyncio.Queue"]:::queue
-        C2["M Consumer coroutines"]:::coro
-        S2["aiohttp.ClientSession"]:::http
+At step 3, coroutine frames consume KB-scale memory compared to the MB-scale reservation
+of OS thread stacks — roughly three orders of magnitude less overhead.
 
-        TaskProc2 --> Loop2 --> P2 --> Q2 --> C2 --> S2
-      end
+At step 6, all ready sockets are reported in a single `epoll`
+notification batch, so the event loop processes completions sequentially and calmly
+rather than in a burst. Requests are dispatched and completed at a steady pace,
+naturally smoothing the load seen by the downstream API.
 
-      subgraph TaskN["Task Slot N → Python Worker Process N"]
-        direction TB
-        TaskProcN["Python worker process"]:::process
-        LoopN["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
-        PN["Producer coroutine"]:::coro
-        QN["asyncio.Queue"]:::queue
-        CN["M Consumer coroutines"]:::coro
-        SN["aiohttp.ClientSession"]:::http
+### Why This Matters in Spark
 
-        TaskProcN --> LoopN --> PN --> QN --> CN --> SN
-      end
-    end
-
-    Spark --> Task1
-    Spark --> Task2
-    Spark --> TaskN
-  end
-
-  API["Remote HTTP API"]:::api
-
-  S1 --> API
-  S2 --> API
-  SN --> API
-
+Spark runs one executor task per available core on each worker node. Because each task
+runs in its own Python process, thread counts multiply across the node:
 ```
+total OS threads per node = (tasks per node) × (threadpool size per task)
+```
+
+On a node with 8 cores and a threadpool size of 20, this is 160 OS threads competing
+for 8 cores — a 20:1 thread-to-core ratio. Each idle thread still consumes ~8MB of
+stack space, so thread stacks alone can account for over 1GB of memory per worker
+node, memory that would otherwise be available to Spark for shuffle buffers, caching,
+and JVM heap.
+
+With `aiohttp`, the thread count for concurrent HTTP I/O remains constant at roughly
+one per executor task — 8 threads on an 8-core worker node, rather than 160.
+Concurrency within each task is expressed as lightweight coroutines entirely
+in user space, adding negligible memory overhead and no scheduler pressure. This ratio
+holds regardless of how large `concurrency_limit` is set: increasing from 20 to 100
+concurrent requests adds 80 coroutines each with a memory footprint in the KB range,
+rather than 80 OS threads each in the MB range.
+
+The practical effect is that `aiohttp`-based workers scale predictably as cluster
+parallelism increases, while `requests`-based workers accumulate OS-level overhead
+that compounds with every additional executor task on the node.
+
+At scale, thread stack memory accumulates across executor processes on each worker
+node, reducing the memory available to Spark's execution pool. Under high response
+payloads, this memory pressure can trigger partition spill to disk — a far more
+costly outcome than scheduling overhead alone — while aiohttp's coroutine-based
+model keeps memory overhead negligible regardless of concurrency level, preserving
+Spark's full memory budget for execution and caching.
+
+
+
 
 
 ## Middleware Pipeline
