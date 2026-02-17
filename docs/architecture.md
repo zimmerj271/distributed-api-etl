@@ -426,10 +426,99 @@ With `concurrency_limit=20`, a partition of 1000 rows can process up to 20 HTTP 
 The concurrency limit prevents overwhelming the target API while maximizing throughput within safe bounds.
 
 
-### Async `aiohttp` vs Multithreaded `request`
+## Async `aiohttp` vs Multithreaded `request`
+
 In many distributed HTTP request Spark applications, concurrency is achieved on the Spark worker by pairing multithreading with the `requests` library. However, because the `request` library is synchronous, it creates an I/O blocking condition during each request in which subsequent requests are required to wait until the current process has been completed. I/O blocking causes two unintended problems with this implementation: 
-1) creates iterative processing when concurrent processing is intended
+
+1) thread blocking I/O prevents all other threads from staging the request, forcing iterative processing when concurrent processing is intended
 2) adds overhead by the OS due to context switching between threads.
+
+A multithreaded `requests` design performs the following operations:
+1) Each thread is assigned an available connection from the connection pool. Unassigned threads wait for a connection in the pool to become available.
+2) The active thread blocks the I/O while waiting for an HTTP response.
+3) Once the thread receives the response, the I/O is unblocked and the OS must contextually switch to the next thread that has an assigned connection.
+
+In contrast, the `aiohttp` library allows for asynchronous, single threaded, non-blocking I/O processes:
+1) Coroutines are assigned available connections from the connection pool.
+2) a coroutine makes a request and yields while waiting for the HTTP response, it does not block the I/O for other coroutines.
+3) The event loop switches between coroutines without OS context switching -- coroutines switching is handled by the python application.
+
+In a standard application, the overhead introduced by multithreading is relatively small so there is no significant benefit to using `aiohttp` over `requests`. Howeer, in the context of a Spark cluster, where the number of Python processes scale with the number of CPUs assigned to the node, the added latency due to context switching between threads can be substantially large.
+
+
+```mermaid
+flowchart TB
+  %% Async aiohttp design on ONE Spark worker node
+  %% N = concurrent task slots (cores)
+  %% M = coroutine concurrency per task (consumers)
+
+  %% ---------- Styling (hex colors for GitHub Mermaid) ----------
+  %% Use light fills + strong strokes; generally readable in light/dark themes.
+  classDef spark   fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#111111;
+  classDef process fill:#ECFDF5,stroke:#10B981,stroke-width:2px,color:#111111;
+  classDef asyncio fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#111111;
+  classDef queue   fill:#FFFBEB,stroke:#EAB308,stroke-width:2px,color:#111111;
+  classDef coro    fill:#FFF1F2,stroke:#E11D48,stroke-width:2px,color:#111111;
+  classDef http    fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#111111;
+  classDef api     fill:#F1F5F9,stroke:#64748B,stroke-width:2px,color:#111111;
+
+  %% ---------- Diagram ----------
+  subgraph Node["Spark Worker Node (VM)"]
+    direction TB
+    Spark["Spark Executor(s) on node\nTotal task slots = N (cores)"]:::spark
+
+    subgraph Slots["Concurrent Task Slots (N)"]
+      direction LR
+
+      subgraph Task1["Task Slot 1 → Python Worker Process 1"]
+        direction TB
+        TaskProc1["Python worker process"]:::process
+        Loop1["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
+        P1["Producer coroutine<br>(enqueue rows)"]:::coro
+        Q1["asyncio.Queue<br>(rows / backpressure)"]:::queue
+        C1["M Consumer coroutines<br>(concurrency = M)"]:::coro
+        S1["aiohttp.ClientSession<br>(conn pool + non-blocking sockets)"]:::http
+
+        TaskProc1 --> Loop1 --> P1 --> Q1 --> C1 --> S1
+      end
+
+      subgraph Task2["Task Slot 2 → Python Worker Process 2"]
+        direction TB
+        TaskProc2["Python worker process"]:::process
+        Loop2["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
+        P2["Producer coroutine"]:::coro
+        Q2["asyncio.Queue"]:::queue
+        C2["M Consumer coroutines"]:::coro
+        S2["aiohttp.ClientSession"]:::http
+
+        TaskProc2 --> Loop2 --> P2 --> Q2 --> C2 --> S2
+      end
+
+      subgraph TaskN["Task Slot N → Python Worker Process N"]
+        direction TB
+        TaskProcN["Python worker process"]:::process
+        LoopN["asyncio Event Loop<br>(1 OS thread)"]:::asyncio
+        PN["Producer coroutine"]:::coro
+        QN["asyncio.Queue"]:::queue
+        CN["M Consumer coroutines"]:::coro
+        SN["aiohttp.ClientSession"]:::http
+
+        TaskProcN --> LoopN --> PN --> QN --> CN --> SN
+      end
+    end
+
+    Spark --> Task1
+    Spark --> Task2
+    Spark --> TaskN
+  end
+
+  API["Remote HTTP API"]:::api
+
+  S1 --> API
+  S2 --> API
+  SN --> API
+
+```
 
 
 ## Middleware Pipeline
