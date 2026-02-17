@@ -65,6 +65,32 @@ This framework is ideal for:
 - APIs with per-second rate limits incompatible with any concurrency
 
 ## Pipeline Flow
+
+### ETL Pipeline
+
+This pipeline handles high-volume API ingestion by mapping rows from an input DataFrame to parameterized HTTP requests. Each row provides contextual data: identifiers, query parameters, timestamps — that customizes a request to a target endpoint. The pipeline processes these requests in parallel across a Spark cluster and writes responses to a bronze table along with execution metadata for downstream processing.
+
+The pipeline is declaratively configured via YAML or JSON, validated at startup using Pydantic models. This catches configuration errors early and enforces type safety across authentication strategies, endpoint templates, and middleware chains. Batch processing is enforced to support idempotent execution: if the pipeline is interrupted, it resumes from the last completed batch rather than reprocessing the entire dataset.
+
+#### Architecture: Driver vs. Worker
+
+The application logic is split between driver-side orchestration and worker-side
+execution:
+
+**Driver-side responsibilities:**
+- Validate pipeline configuration (authentication, endpoints, middleware)
+- Split input data into idempotent batches with checkpoint tracking
+- Construct serializable request executors and middleware chains
+- Manage long-lived authentication processes (e.g., OAuth2 token refresh)
+- Orchestrate batch execution and collect results
+
+**Worker-side responsibilities:**
+- Transform DataFrame rows into HTTP request contexts (URL, headers, body)
+- Inject authentication credentials from driver-side services or local runtime
+- Execute middleware pipeline (retries, logging, timing)
+- Issue concurrent HTTP requests and collect responses
+- Attach metadata (timestamps, status codes, error details) to each response
+
 ```mermaid
 flowchart TB
     subgraph config["Pipeline Configuration"]
@@ -130,6 +156,7 @@ flowchart TB
 ```
 
 ### Driver-Side Execution
+
 ```mermaid
 flowchart TB
     subgraph driver["Driver-Side Orchestration"]
@@ -201,8 +228,6 @@ flowchart TB
 
 ### Worker-Side Execution
 
-Each Spark partition executes the following flow:
-
 ```mermaid
 flowchart TB
     subgraph partition["PARTITION EXECUTION"]
@@ -211,7 +236,7 @@ flowchart TB
         rowin["Input Row Data"]
         rowout["Ouput Row Data"]
         
-        template["REQUEST TEMPLATE<br/><br/>• Endpoint URL<br/>• Headers (Accept, Content-Type)<br/>• Method (GET, POST, etc.)"]
+        template["REQUEST TEMPLATE<br/>• Endpoint URL<br/>• Headers (Accept, Content-Type)<br/>• Method (GET, POST, etc.)"]
         
         subgraph middleware1["MIDDLEWARE CHAIN"]
             direction LR
@@ -225,7 +250,7 @@ flowchart TB
         
         subgraph transport["TRANSPORT"]
             direction TB
-            session["aiohttp Session (process-scoped, connection pooled)<br/><br/>• TCP Connection Pool<br/>• TLS Session Reuse<br/>• DNS Caching"]
+            session["aiohttp Session (process-scoped, connection pooled)<br/>• TCP Connection Pool<br/>• TLS Session Reuse<br/>• DNS Caching"]
         end
         
         response["Response"]
