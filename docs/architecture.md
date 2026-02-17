@@ -23,7 +23,34 @@ The framework is organized into three architectural layers:
 | Driver-side      | Orchestration, batching, driver-side authentication, and resource distribution |
 | Executor-side    | Concurrent request execution, middleware processing, worker-side authentication|
 
-#### When to Use This Framework
+### Batch Processing and Idempotency
+
+All pipelines process data in configurable batches (default: 10000 rows). This design choice enforces idempotency:
+
+- **Checkpoint tracking**: Each batch completion is recorded, enabling safe pipeline restarts
+- **Partial failure recovery**: Failed batches can be retried without reprocessing successful ones
+- **Memory management**: Bounded batch sizes prevent executor memory exhaustion
+- **Progress visibility**: Batch-level metrics provide granular execution monitoring
+
+Larger batches reduce overhead but increase memory usage and retry cost. Smaller batches provide finer-grained checkpointing at the cost of more Spark actions.
+
+### Key Design Principles
+
+- **Factory-based composition**: All components (transport, auth, middleware) are instantiated via serializable factories, ensuring they work across Spark's distributed boundaries
+- **Extensible design**: Abstract interfaces and dependency injection enable custom authentication, middleware, and transport implementations without modifying framework code
+- **Process-scoped resources**: HTTP sessions and connections are reused across partition executions on the same worker for efficiency
+- **Separation of concerns**: Authentication, retry logic, logging, and transport are decoupled through middleware layers
+- **Idempotency**: Required batch processing with checkpointing ensures pipeline resilience and safe re-execution after failures
+
+### Architecture Diagrams
+
+The following sections provide visual representations of the framework:
+- **[Driver-Side Execution](#driver-side-exectuion)** - Driver → Workers → Response collection
+- **[Worker-Side Exectuion](#worker-side-execution)** - Row processing, middleware, and transport
+- **[Concurrent Request Processing](#concurrent-request-processing)** - Producer/consumer pattern with `asyncio.Queue`
+- **[Middleware Pipeline](#middleware-pipeline)** - Injector pattern middleware pipeline
+
+### When to Use This Framework
 
 This framework is ideal for:
 - **High-volume API ingestion**: Processing millions of records requiring individual API calls
@@ -38,60 +65,138 @@ This framework is ideal for:
 - APIs with per-second rate limits incompatible with any concurrency
 
 ## Pipeline Flow
-
-### Driver-Side Execution
-
 ```mermaid
 flowchart TB
-    subgraph driver1["DRIVER SIDE"]
+    subgraph config["Pipeline Configuration"]
         direction TB
-        config["YAML/JSON<br/>Config"]
-        preprocess["Preprocess<br/>Secrets"]
-        validation["Pydantic<br/>Validation"]
-        factories["Runtime Factories<br/>• Transport<br/>• Auth<br/>• Middleware<br/>• Request Context"]
-        source["Source Table<br/>or DataFrame"]
+        yaml["YAML/JSON Config"]
+        secrets["Secret Preprocessing"]
+        validation["Pydantic Validation"]
+        
+        yaml --> secrets --> validation
+    end
+    
+    subgraph driver["Driver-Side Orchestration"]
+        direction TB
+        factories["Build Serializable Factories<br/>• Transport<br/>• Auth<br/>• Middleware"]
+        auth_mgmt["Authentication Runtime<br/>(e.g., OAuth2 RPC Server)"]
+        batching["Required Batching<br/>(Idempotency enforcement)"]
+        orchestration["Pipeline Orchestration"]
+        
+        factories --> auth_mgmt
+        auth_mgmt --> batching
+        batching --> orchestration
+    end
+    
+    subgraph distribute["Distribution (Per Batch)"]
+        direction LR
+        source["Source Data<br/>(Batch N)"]
         repartition["Repartition &<br/>Serialize to Workers"]
         
-        config --> preprocess --> validation --> factories
         source --> repartition
-        factories --> repartition
     end
     
-    subgraph workers["WORKER SIDE"]
+    subgraph workers["Worker-Side Execution"]
         direction TB
-        subgraph partitions[" "]
-            direction LR
-            p1["Partition 1"]
-            p2["Partition 2"]
-            pn["Partition N"]
+        partitions["Partitions<br/>(Distributed)"]
+        executor["ApiPartitionExecutor<br/>(Concurrent Processing)"]
+        responses["Response Records"]
+        
+        partitions --> executor --> responses
+    end
+    
+    subgraph results["Results Collection"]
+        direction TB
+        collect["Collect Batch Results<br/>Write to Sink"]
+        checkpoint["Checkpoint Batch<br/>(Idempotency marker)"]
+        
+        collect --> checkpoint
+    end
+    
+    config --> driver
+    driver --> distribute
+    orchestration -.->|"deploy factories"| repartition
+    repartition -.->|"distribute"| partitions
+    responses --> results
+    checkpoint -.->|"next batch"| batching
+    
+    style config fill:#1168bd,stroke:#0d4884,color:#fff
+    style driver fill:#28a745,stroke:#1e7e34,color:#fff
+    style distribute fill:#6c757d,stroke:#495057,color:#fff
+    style workers fill:#17a2b8,stroke:#117a8b,color:#fff
+    style results fill:#dc3545,stroke:#bd2130,color:#fff
+    style batching fill:#e67e22,stroke:#d35400,color:#fff
+    style checkpoint fill:#e67e22,stroke:#d35400,color:#fff
+```
+
+### Driver-Side Execution
+```mermaid
+flowchart TB
+    subgraph driver["Driver-Side Orchestration"]
+        direction TB
+        
+        config_in["Validated Config<br/>(Pydantic Models)"]
+        
+        subgraph factory_build["Factory Construction"]
+            direction TB
+            transport_factory["Transport Factory<br/>(Serializable Callable)"]
+            endpoint_factory["Endpoint Factory<br/>(RequestContext builder)"]
+            middleware_factory["Middleware Factories<br/>(List of Callables)"]
         end
         
-        executor["ApiPartitionExecutor<br/>For each row:<br/>1. Build request from template<br/>2. Apply middleware chain<br/>3. Send HTTP request via Transport<br/>4. Collect response"]
+        subgraph auth_runtime["Authentication Runtime"]
+            direction TB
+            check{"Auth Type?"}
+            simple["Static/API Key<br/>(No runtime needed)"]
+            oauth["OAuth2 RPC Server<br/>(Background token refresh)"]
+            mtls["mTLS Setup<br/>(Certificate loading)"]
+            
+            check -->|"static"| simple
+            check -->|"oauth2"| oauth
+            check -->|"mtls"| mtls
+        end
         
-        responses["Response Records"]
-        p1 -.-> executor
-        p2 -.-> executor
-        pn -.-> executor
-        executor --> responses
+        subgraph batch_mgmt["Batch Processing (Required)"]
+            direction TB
+            source["Source DataFrame"]
+            batch_split["Split into Batches<br/>(batch_size from config)"]
+            batch_loop["For each batch"]
+            check_complete{"All batches<br/>processed?"}
+            
+            source --> batch_split --> batch_loop
+            batch_loop --> check_complete
+            check_complete -->|"No"| batch_loop
+            check_complete -->|"Yes"| complete["Pipeline Complete"]
+        end
+        
+        subgraph orchestrate["Batch Orchestration"]
+            direction TB
+            create_executor["Create ApiPartitionExecutor<br/>(with factories)"]
+            map_fn["Build mapPartitions function"]
+            execute["df.rdd.mapPartitions(fn)"]
+            collect_batch["Collect batch results"]
+            checkpoint["Checkpoint batch<br/>(Idempotency)"]
+            
+            create_executor --> map_fn --> execute
+            execute --> collect_batch --> checkpoint
+        end
+        
+        config_in --> factory_build
+        factory_build --> auth_runtime
+        auth_runtime --> batch_mgmt
+        batch_loop -.->|"current batch"| orchestrate
+        checkpoint -.->|"next iteration"| batch_loop
+        
+        execute -.->|"serialized factories"| workers["To Workers"]
     end
     
-    subgraph driver2["DRIVER SIDE"]
-        direction TB
-        collect["Collect Results<br/>Write to Sink Table"]
-    end
-    
-    repartition -.->|distribute| p1
-    repartition -.->|distribute| p2
-    repartition -.->|distribute| pn
-    responses --> collect
-    
-    style driver1 fill:#1168bd,stroke:#0d4884,color:#fff
-    style workers fill:#6c757d,stroke:#495057,color:#fff
-    style driver2 fill:#1168bd,stroke:#0d4884,color:#fff
-    style partitions fill:none,stroke:none
-    style executor fill:#28a745,stroke:#1e7e34,color:#fff
-    style responses fill:#17a2b8,stroke:#117a8b,color:#fff
-    style repartition fill:#dc3545,stroke:#bd2130,color:#fff
+    style driver fill:#28a745,stroke:#1e7e34,color:#fff
+    style factory_build fill:#1168bd,stroke:#0d4884,color:#fff
+    style auth_runtime fill:#20c997,stroke:#17a673,color:#fff
+    style orchestrate fill:#6c757d,stroke:#495057,color:#fff
+    style workers fill:#dc3545,stroke:#bd2130,color:#fff
+    style checkpoint fill:#e67e22,stroke:#d35400,color:#fff
+    style batch_mgmt fill:#e67e22,stroke:#d35400,color:#fff
 ```
 
 ### Worker-Side Execution
@@ -159,7 +264,7 @@ flowchart TB
 
 The `ApiPartitionExecutor` uses an **asyncio producer-consumer pattern** with bounded concurrency to process partition rows in parallel, rather than sequentially.
 
-### Architecture Overview
+### Row-level concurrency
 The following diagram shows the structural components and data flow:
 ```mermaid
 flowchart TB
@@ -320,7 +425,14 @@ With `concurrency_limit=20`, a partition of 1000 rows can process up to 20 HTTP 
 
 The concurrency limit prevents overwhelming the target API while maximizing throughput within safe bounds.
 
-## Middleware Pipeline and Execution
+
+### Async `aiohttp` vs Multithreaded `request`
+In many distributed HTTP request Spark applications, concurrency is achieved on the Spark worker by pairing multithreading with the `requests` library. However, because the `request` library is synchronous, it creates an I/O blocking condition during each request in which subsequent requests are required to wait until the current process has been completed. I/O blocking causes two unintended problems with this implementation: 
+1) creates iterative processing when concurrent processing is intended
+2) adds overhead by the OS due to context switching between threads.
+
+
+## Middleware Pipeline
 
 Middleware is executed in the order it is configured, wrapping each subsequent middleware:
 
@@ -357,37 +469,3 @@ flowchart TB
 ```
 
 This allows middleware to run logic **before and/or after** the HTTP request.
-
-## Design Principles
-
-### 1. Spark Safety
-
-* No SparkContext on workers
-* Only serializable factories are shipped
-
-### 2. Idempotency First
-
-* Every row carries a `request_id`
-* Designed for merge-friendly downstream tables
-
-### 3. Compile, Then Run
-
-* Config is preprocessed, validated, and *compiled* on the driver
-* Workers execute only runtime logic
-
-### 4. Clear Abstractions
-
-* Config ≠ Control ≠ Runtime
-* Each layer has a single responsibility
-
-### 5. Minimal Magic
-
-* Explicit wiring
-* No hidden global state
-* No runtime config mutation
-
-### 6. Middleware-Driven Extensibility
-
-* Request behavior is modified via middleware, not hard-coded logic
-* Middleware is composable, reusable, and ordered
-* New functionality is added without changing the executor or transport layers
