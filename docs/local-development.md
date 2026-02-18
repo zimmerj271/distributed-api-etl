@@ -14,34 +14,52 @@ All services are defined in `docker/docker-compose.yml` and orchestrated through
 
 The platform is composed of four layers: **infrastructure**, **catalog**, **compute**, and **orchestration**, with optional services for development and diagnostics.
 
+```mermaid
+flowchart TB
+    airflow_ui["Airflow Web UI<br>─────────────<br>:8088"]
+    scheduler["Airflow Scheduler"]
+    master["Spark Master<br>─────────────<br>:7077 / :8080 / :6066"]
+
+    subgraph workers["Spark Workers"]
+        direction LR
+        w1["Worker 1"]
+        w2["Worker 2"]
+    end
+
+    minio[("MinIO (S3)<br>─────────────<br>:9000 / :9001")]
+    hive["Hive Metastore<br>─────────────<br>:9083"]
+    postgres[("PostgreSQL<br>─────────────<br>:5432")]
+
+    subgraph optional["Optional Services (--profile keycloak)"]
+        direction LR
+        keycloak["Keycloak<br>─────────────<br>:8180"]
+        mock_api["Mock API<br>─────────────<br>:8200"]
+    end
+
+    airflow_ui --> scheduler
+    scheduler -->|"submits jobs via REST API"| master
+    master --> workers
+    w1 & w2 -->|"reads/writes data"| minio
+    w1 & w2 -->|"queries schema"| hive
+    w1 & w2 -->|"HTTP requests"| mock_api
+    minio -->|"metadata"| postgres
+    hive --> postgres
+    keycloak -->|"issues tokens"| w1 & w2
+
+    style airflow_ui fill:#1168bd,stroke:#0d4884,color:#fff
+    style scheduler fill:#1168bd,stroke:#0d4884,color:#fff
+    style master fill:#e67e22,stroke:#d35400,color:#fff
+    style workers fill:#1a1a2e,stroke:#4a4a8a,color:#fff
+    style w1 fill:#17a2b8,stroke:#117a8b,color:#fff
+    style w2 fill:#17a2b8,stroke:#117a8b,color:#fff
+    style minio fill:#28a745,stroke:#1e7e34,color:#fff
+    style hive fill:#6c757d,stroke:#495057,color:#fff
+    style postgres fill:#6c757d,stroke:#495057,color:#fff
+    style optional fill:#1a1a2e,stroke:#4a4a8a,color:#fff,stroke-dasharray: 5 5
+    style keycloak fill:#dc3545,stroke:#bd2130,color:#fff
+    style mock_api fill:#dc3545,stroke:#bd2130,color:#fff
 ```
-                         ┌───────────────────┐
-                         │  Airflow Web UI   │  :8088
-                         └─────────┬─────────┘
-                                   │
-                         ┌─────────▼─────────┐
-                         │ Airflow Scheduler │
-                         └─────────┬─────────┘
-                                   │ submits jobs via REST API
-                         ┌─────────▼─────────┐
-                         │   Spark Master    │  :7077 / :8080 / :6066
-                         └─────────┬─────────┘
-                              ┌────┴────┐
-                         ┌────▼───┐ ┌───▼────┐
-                         │Worker 1│ │Worker 2│
-                         └────┬───┘ └───┬────┘
-                              │         │
-               reads/writes data    queries schema
-                         │              │
-                    ┌────▼────┐    ┌────▼─────────┐
-                    │  MinIO  │    │Hive Metastore│  :9083
-                    │   (S3)  │    └──────┬───────┘
-                    │:9000/01 │           │
-                    └────┬────┘    ┌──────▼──────┐
-                         │         │ PostgreSQL  │  :5432
-                         └────────▶│ (metadata)  │
-                                   └─────────────┘
-```
+
 
 ## Service Reference
 
