@@ -593,7 +593,7 @@ Each middleware object receives a `RequestExchange` and may:
 3) Optionally execute logic after the downstream middleware returns
 4) Return the `RequestExchange` up the chain
 
-Middleware order is significant. Control-flow middleware (e.g., retry) should typically wrap transformation middleware (e.g., JSON parsing) to ensure retries apply to the full request lifecycle. Currently middleware order is defined as the order it is entered into the configuration. A future improvement to this application is to add middleware order assignment to the configuration.
+Middleware order is important. Control-flow middleware (e.g., retry) should typically wrap transformation middleware (e.g., JSON parsing) to ensure retries apply to the full request lifecycle. Currently middleware order is defined as the order it is entered into the configuration. A future improvement to this application is to add middleware order assignment to the configuration.
 
 #### Middleware Pipeline Diagram
 ```mermaid
@@ -616,51 +616,7 @@ sequenceDiagram
 
 The innermost node of the pipeline is the HTTP transport. Middleware never performs the network request directly; it wraps or enriches the exchange before delegating to the transport layer.
 
-### Middleware Contract
-
-All middleware must:
-
-- Accept a `RequestExchange`
-- Return a `RequestExchange`
-- Be fully async-safe
-- Be serializable via factory instantiation
-- Avoid blocking I/O
-- Avoid direct Spark API usage
-
-Middleware should fail “softly” by recording structured error information in
-`RequestExchange.metadata` rather than raising unhandled exceptions.
-
-### Middleware Types
-
-Middleware in this framework follows one of two control-flow types:
-
-#### 1. Interceptor Middleware
-
-Interceptors wrap the pipeline by calling `await next_call(exchange)`. They may execute logic both before and after the HTTP request and may alter control flow.
-Typical use cases:
-- Retry with backoff
-- Rate limiting
-- OAuth2 token refresh
-- Circuit breaking
-- Response transformation
-
-Interceptors are the most powerful middleware type and must be implemented carefully.
-
-#### 2. Non-Control Middleware
-
-Non-control middleware does not alter control flow.
-It performs deterministic mutation or observation and returns the exchange.
-Typical use cases:
-- Injecting headers or query parameters
-- Adding static metadata
-- Logging
-- Timing
-- Worker identity annotation
-
-Non-control middleware should never:
-- Retry requests
-- Raise exceptions intentionally
-- Modify success/failure semantics
+For the full pipeline reference: available middleware, YAML configuration, middleware categories, and how to implement custom middleware — see [Middleware](.docs/middleware.md).
 
 ### Execution Semantics (Pre/Post Phases)
 
@@ -720,57 +676,3 @@ class MiddlewareRuntimeFactory(RuntimeFactory):
     def get_factories(mw_cfgs: list[MiddlewareConfigModel]) -> list[Callable[[], MIDDLEWARE_FUNC]]:
         return [MiddlewareRuntimeFactory.build_factory(cfg) for cfg in mw_cfgs]
 ```
-
-### Why Use a Middleware Pattern:
-1) **Separation of Concerns**
-Each middleware has a single job:
-- Auth injector: add credentials
-- Retry middleware: handle transient failures
-- Logging middleware: record requests/responses
-- Timing middleware: measure latency
-
-This makes each component simple, testable, and reusable.
-
-2) **Composability**
-Middleware can be stacked in any order via configuration:
-```yaml
-middleware:
-  - type: logging
-  - type: timing
-  - type: json_body
-  - type: retry
-    max_attempts: 5
-    retry_status_codes: [429, 500, 502, 503]
-    base_delay: 0.2
-    max_delay: 2.0
-```
-The framework builds the pipeline at runtime by wrapping each middleware around the next.
-
-3) **Extensibility**
-New middleware can be added without modifying existing code:
-```python
-class RateLimitMiddleware:
-    async def __call__(self, exchange: RequestExchange, next_middleware: NEXT_CALL):
-        await self.rate_limiter.acquire()
-        return await next_middleware(exchange)
-```
-Just add it to the configuration and the framework automatically integrates it.
-
-4. **Testability**
-Each middleware can be unit tested in isolation:
-```python
-async def test_api_key_injector():
-    middleware = HeaderAuthMiddleware(username="user", password="pass")
-
-    exchange = RequestExchange(
-        context=RequestContext(method=..., url=...)
-    )
-
-    async def mock_next(ex: RequestExchange):
-        assert "Authorization" in ex.context.headers
-        return ex
-
-    await middleware(exchange, mock_next)
-```
-
-
