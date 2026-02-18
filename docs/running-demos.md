@@ -27,24 +27,7 @@ make ps
 # 4. Run demos via Jupyter or Airflow (see below)
 ```
 
-## Option 1: Run via Jupyter Notebooks
-
-Jupyter provides an interactive way to run and explore the demos.
-
-1. Open JupyterLab at **http://localhost:8888** (Token: `jupyter`)
-2. Navigate to `notebooks/` and open any demo notebook:
-   - `noauth_demo.ipynb`
-   - `basic_auth_demo.ipynb`
-   - `bearer_token_demo.ipynb`
-   - `oauth2_password_demo.ipynb`
-   - `oauth2_client_credentials_demo.ipynb`
-3. Run all cells (Shift+Enter or Run > Run All Cells)
-4. View results in the final cells showing:
-   - Total records processed
-   - Status code distribution
-   - Sample response bodies
-
-## Option 2: Run via Airflow UI
+## Option 1: Run via Airflow UI
 
 Airflow provides scheduled/triggered execution for production workflows.
 
@@ -60,7 +43,7 @@ Airflow provides scheduled/triggered execution for production workflows.
 4. Click the play button > "Trigger DAG"
 5. Monitor execution in the DAG's Graph or Grid view
 
-## Option 3: Run via Airflow CLI
+## Option 2: Run via Airflow CLI
 
 Run demos directly from the command line:
 
@@ -84,6 +67,24 @@ docker compose -f docker/docker-compose.yml exec airflow-webserver \
 docker compose -f docker/docker-compose.yml exec airflow-webserver \
   airflow dags trigger demo_all_pipelines_parallel
 ```
+Results land in Delta tables viewable via the Spark SQL shell, MinIO console or Jupyter notebook.
+
+## Option 3: Run via Jupyter Notebooks
+
+Jupyter provides an interactive way to run and explore the demos.
+
+1. Open JupyterLab at **http://localhost:8888** (Token: `jupyter`)
+2. Navigate to `notebooks/` and open any demo notebook:
+   - `noauth_demo.ipynb`
+   - `basic_auth_demo.ipynb`
+   - `bearer_token_demo.ipynb`
+   - `oauth2_password_demo.ipynb`
+   - `oauth2_client_credentials_demo.ipynb`
+3. Run all cells (Shift+Enter or Run > Run All Cells)
+4. View results in the final cells showing:
+   - Total records processed
+   - Status code distribution
+   - Sample response bodies
 
 ## Parallel Execution Demo
 
@@ -101,22 +102,22 @@ All 5 Spark jobs are submitted simultaneously and execute across the Spark clust
 
 ## Verifying Results
 
-### Via Jupyter
+### Via PySpark Shell
+```bash
+# Enter the PySpark shell:
+make spark-shell
 
-```python
-# Read the sink table
+# List available tables (from Hive Metastore)
+spark.sql("SHOW TABLES").show()
+
+# Query a Delta table by name
 spark.table("demo.noauth_demo_response").show()
-
-# Check record counts
-spark.table("demo.noauth_demo_response").count()
-
-# Inspect response data
-spark.table("demo.noauth_demo_response").select("body_text").show(truncate=False)
 ```
 
 ### Via Spark SQL Shell
 
 ```bash
+# Enter the Spark SQL shell:
 make spark-sql
 
 # In the Spark SQL shell:
@@ -131,6 +132,19 @@ SELECT * FROM noauth_demo_response LIMIT 10;
 1. Open http://localhost:9001 (minioadmin/minioadmin)
 2. Navigate to the `warehouse` bucket
 3. Browse to `demo.db/<table_name>/` to see Delta files
+
+### Via Jupyter
+
+```python
+# Read the sink table
+spark.table("demo.noauth_demo_response").show()
+
+# Check record counts
+spark.table("demo.noauth_demo_response").count()
+
+# Inspect response data
+spark.table("demo.noauth_demo_response").select("body_text").show(truncate=False)
+```
 
 ## Troubleshooting
 
