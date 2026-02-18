@@ -48,7 +48,7 @@ The following sections provide visual representations of the framework:
 - **[Driver-Side Execution](#driver-side-exectuion)** - Driver → Workers → Response collection
 - **[Worker-Side Exectuion](#worker-side-execution)** - Row processing, middleware, and transport
 - **[Concurrent Request Processing](#concurrent-request-processing)** - Producer/consumer pattern with `asyncio.Queue`
-- **[Middleware Pipeline](#middleware-pipeline)** - Injector pattern middleware pipeline
+- **[Middleware Pipeline](#row-processing-execution-timeline)** - Injector pattern middleware pipeline
 
 ### When to Use This Framework
 
@@ -616,7 +616,7 @@ sequenceDiagram
 
 The innermost node of the pipeline is the HTTP transport. Middleware never performs the network request directly; it wraps or enriches the exchange before delegating to the transport layer.
 
-For the full pipeline reference: available middleware, YAML configuration, middleware categories, and how to implement custom middleware — see [Middleware](.docs/middleware.md).
+For the full pipeline reference: available middleware, YAML configuration, middleware categories, and how to implement custom middleware — see [Middleware](middleware.md).
 
 ### Execution Semantics (Pre/Post Phases)
 
@@ -676,3 +676,12 @@ class MiddlewareRuntimeFactory(RuntimeFactory):
     def get_factories(mw_cfgs: list[MiddlewareConfigModel]) -> list[Callable[[], MIDDLEWARE_FUNC]]:
         return [MiddlewareRuntimeFactory.build_factory(cfg) for cfg in mw_cfgs]
 ```
+
+## Transport
+
+The transport layer is the innermost component of the pipeline — the only layer that performs network I/O. It sits at the end of the middleware chain and has a deliberately narrow responsibility: accept a TransportRequest, execute the HTTP call, and return a TransportResponse. It has no knowledge of authentication, retries, logging, or response semantics. Those concerns belong entirely to middleware.
+This boundary is what makes the transport swappable. The middleware chain is built against an abstract TransportEngine interface, so replacing aiohttp with httpx or any other asynchronous HTTP library requires no changes to middleware or pipeline logic.
+
+The transport is also the only component with a process-scoped lifecycle. Rather than creating a new HTTP session per row or per partition, a single transport instance is initialized once per Python worker process and reused across all partition executions on that worker. This amortizes the cost of TCP connection establishment, TLS negotiation, and DNS resolution — costs that would otherwise be paid thousands of times per worker.
+
+For implementation details, configuration, and connection pool settings, see [Transport](transport.md).
