@@ -1,16 +1,46 @@
 # Middleware
 
-This framework uses a **middleware pipeline** to customize request behavior without modifying core execution logic. Middleware is executed **on Spark worker nodes** and wraps each API request using a chain-of-responsibility pattern.
+The middleware pipeline is the primary extension point of this framework. It is a composable chain of components that wrap each HTTP request/response cycle on Spark worker nodes, following the interceptor pattern: each middleware receives a `RequestExchange` and a `next_call` handle to the remainder of the chain, and may execute logic before and after the downstream call.
+All request behavior — authentication, retries, logging, timing, parameter injection — is implemented as middleware. The core execution engine has no knowledge of any of these concerns.
 
-## What Middleware Can Do
+## Middleware Types
 
-Middleware allows you to:
+Middleware in this framework falls into one of two categories based on whether it affects control flow:
+### Interceptors
+Interceptors wrap `await next_call(exchange)` and may execute logic both before and after the HTTP request. They can alter control flow by retrying, short-circuiting, or conditionally calling the next middleware.
+Typical use cases:
 
-* Inject authentication or headers
-* Retry failed requests with backoff
-* Record timing and diagnostics
-* Enrich or inspect request / response metadata
-* Mutate outbound requests on a per-row basis
+- Retry with exponential backoff
+- OAuth2 token refresh
+- JSON response parsing and validation
+- Circuit breaking
+
+Interceptors are the most powerful middleware type. Because they control whether and how many times the downstream pipeline executes, they must be implemented carefully.
+
+### Injectors
+Injectors always call `await next_call(exchange)` unconditionally. They mutate the outbound request or record observations on the inbound response, but never alter control flow.
+Typical use cases:
+
+- Injecting authentication headers or bearer tokens
+- Adding query parameters from row data
+- Logging request and response details
+- Recording timing and executor identity
+
+Injectors should never retry requests, raise exceptions intentionally, or modify success/failure semantics.
+
+## Middleware Contract
+
+All middleware must:
+
+- Accept a `RequestExchange`
+- Return a `RequestExchange`
+- Be fully async-safe
+- Be serializable via factory instantiation
+- Avoid blocking I/O
+- Avoid direct Spark API usage
+
+Middleware should fail softly by recording structured error information in
+`RequestExchange.metadata` rather than raising unhandled exceptions.
 
 ## Execution Order
 
@@ -30,57 +60,23 @@ Middleware A
 
 This allows middleware to run logic **before and/or after** the HTTP request.
 
-## Middleware Categories
-
-Middleware is intentionally divided into **three conceptual categories**:
-
-### 1. Interceptors (Control-Flow Middleware)
-
-Interceptors **modify request or response behavior** and may influence execution flow.
-
-Examples:
-* Retry logic
-* Authentication injection
-* Query parameter injection
-* JSON parsing
-* Request/response mutation
-
-These middleware **must run before the HTTP request**.
-
-### 2. Listeners (Observability Middleware)
-
-Listeners **observe and record metadata** but do not alter request/response semantics.
-
-Examples:
-* Logging
-* Timing
-* Worker / executor identity
-* Diagnostics
-
-Listeners are safe to run anywhere in the pipeline and never affect request success or retries.
-
-### 3. Common (Mutate Requests Only)
-
-Standard middleware that does not follow the interceptor pattern. These middleware objects only mutate requests.
-
 ## Available Middleware
 
 | Middleware | Category | Purpose |
 |----------|----------|---------|
 | RetryMiddleware | Interceptor | Retry failed requests with exponential backoff |
 | JsonResponseMiddleware | Interceptor | Parse and validate JSON responses |
-| AuthMiddleware | Interceptor | Inject authentication headers |
-| ParamInjectorMiddleware | Interceptor | Inject row-level query parameters |
-| LoggingMiddleware | Listener | Record request/response logs |
-| TimingMiddleware | Listener | Measure request latency |
-| WorkerIdentityMiddleware | Listener | Record executor identity |
-| TransportDiagnosticMiddleware | Listener | Record transport diagnostics |
-| BearerTokenMiddleware | Common | Injects bearer token into request header |
-| HeaderAuthMiddleware | Common | Injects user authentication into header |
+| ParamInjectorMiddleware | Injector | Inject row-level query parameters into the request |
+| LoggingMiddleware | Injector | Record request and response details to metadata |
+| TimingMiddleware | Injector | Measure and record total request latency |
+| WorkerIdentityMiddleware | Injector | Annotate requests with executor hostname, PID, and thread ID |
+| TransportDiagnosticMiddleware | Injector | Record transport connection warmup diagnostics |
+| BearerTokenMiddleware | Injector | Injects bearer token into request header |
+| HeaderAuthMiddleware | Injector | Injects user authentication into header |
 
 ## Configuration
 
-Middleware is configured declaratively and executed in the order listed.
+Middleware is configured declaratively in the pipeline YAML and executed in the order listed. Interceptors that wrap the full request lifecycle — retry, auth — should generally appear before injectors that only observe.
 
 Each middleware entry defines:
 * The middleware type
@@ -135,29 +131,7 @@ middleware:
 
 ## Adding Custom Middleware
 
-To add custom middleware, implement the following interface:
-
-```python
-async def __call__(
-    self,
-    request_exchange: RequestExchange,
-    next_call: NEXT_CALL
-) -> RequestExchange:
-    # Pre-request logic
-    ...
-
-    # Call next middleware in chain
-    result = await next_call(request_exchange)
-
-    # Post-request logic
-    ...
-
-    return result
-```
-
-Then register it via configuration, factory injection, or late binding in `ApiPartitionExecutor`.
-
-### Example: Custom Header Middleware
+Implement the interceptor interface and register via factory injection or configuration:
 
 ```python
 class CustomHeaderMiddleware:
@@ -170,17 +144,62 @@ class CustomHeaderMiddleware:
         request_exchange: RequestExchange,
         next_call: NEXT_CALL
     ) -> RequestExchange:
-        # Add custom header before request
-        request_exchange.request.headers[self.header_name] = self.header_value
-
-        # Continue chain
+        request_exchange.context.headers[self.header_name] = self.header_value
         return await next_call(request_exchange)
+```
+For an interceptor that executes logic on both sides of the pipeline:
+```python
+class TimingMiddleware:
+    async def __call__(
+        self,
+        request_exchange: RequestExchange,
+        next_call: NEXT_CALL
+    ) -> RequestExchange:
+        start = time.monotonic()
+        result = await next_call(request_exchange)
+        result.metadata["duration"] = time.monotonic() - start
+        return result
+```
+### Unit Testing Middleware
+Unit testing middleware in isolation is straightforward — pass a mock `next_call` and assert on the returned RequestExchange:
+```python
+async def test_header_auth_middleware():
+    middleware = HeaderAuthMiddleware(username="user", password="pass")
+    exchange = RequestExchange(context=RequestContext(method=..., url=...))
+
+    async def mock_next(ex: RequestExchange) -> RequestExchange:
+        assert "Authorization" in ex.context.headers
+        return ex
+
+    await middleware(exchange, mock_next)
 ```
 
 ## Best Practices
 
-1. **Order matters**: Place interceptors (retry, auth) before listeners (logging, timing)
-2. **Keep middleware focused**: Each middleware should do one thing well
-3. **Avoid state**: Middleware should be stateless or use request-scoped state
-4. **Handle errors gracefully**: Middleware should not swallow exceptions unless intentional
-5. **Log strategically**: Avoid logging sensitive data (credentials, tokens)
+1) **Order matters** — place interceptors (retry, auth) before injectors (logging, timing) so retries apply to the full request lifecycle including auth injection
+2) **Keep middleware focused** — each middleware should do exactly one thing
+Prefer stateless middleware — if state is needed, scope it to the worker process via the factory pattern
+3) **Fail softly** — record errors in RequestExchange.metadata rather than raising exceptions that would terminate partition processing
+4) **Never log sensitive data** — avoid writing credentials, tokens, or PII to metadata or logs
+
+## Why Use a Middleware Pattern:
+1) **Separation of Concerns**
+Each middleware has a single job:
+- Auth injector: add credentials
+- Retry middleware: handle transient failures
+- Logging middleware: record requests/responses
+- Timing middleware: measure latency
+
+This makes each component simple, testable, and reusable.
+
+2) **Composability**
+Middleware can be stacked in any order via configuration:
+The framework builds the pipeline at runtime by wrapping each middleware around the next.
+
+3) **Extensibility**
+New middleware can be added without modifying existing code:
+Just add it to the configuration and the framework automatically integrates it.
+
+4. **Testability**
+Each middleware can be unit tested in isolation:
+
