@@ -460,7 +460,6 @@ With `concurrency_limit=20`, a partition of 1000 rows can process up to 20 HTTP 
 
 The concurrency limit prevents overwhelming the target API while maximizing throughput within safe bounds.
 
-
 ## Async `aiohttp` vs Multithreaded `requests`
 
 In many distributed HTTP ingestion pipelines built on Spark, concurrency within a
@@ -576,44 +575,202 @@ costly outcome than scheduling overhead alone — while aiohttp's coroutine-base
 model keeps memory overhead negligible regardless of concurrency level, preserving
 Spark's full memory budget for execution and caching.
 
-
-
-
-
 ## Middleware Pipeline
 
-Middleware is executed in the order it is configured, wrapping each subsequent middleware:
+### Overview
 
+The middleware pipeline is a chain of composable, reusable components that wrap the core HTTP request/response cycle. Each middleware component has a single responsibility (authentication injection, retry logic, logging, timing, etc.) and can be added, removed, or reordered via configuration without modifying application code.
+
+Middleware may:
+- Mutate outbound requests
+- Intercept and alter control flow
+- Transform inbound responses
+- Record diagnostics and metrics
+
+Each middleware object receives a `RequestExchange` and may:
+1) Mutate the outbound request (headers, params, body, metadata)
+2) Optionally call the next middleware in the chain
+3) Optionally execute logic after the downstream middleware returns
+4) Return the `RequestExchange` up the chain
+
+Middleware order is significant. Control-flow middleware (e.g., retry) should typically wrap transformation middleware (e.g., JSON parsing) to ensure retries apply to the full request lifecycle. Currently middleware order is defined as the order it is entered into the configuration. A future improvement to this application is to add middleware order assignment to the configuration.
+
+#### Middleware Pipeline Diagram
 ```mermaid
-flowchart TB
-    request["Request"]
-    
-    subgraph mw_a["Middleware A"]
-        direction TB
-        subgraph mw_b["Middleware B"]
-            direction TB
-            subgraph mw_c["Middleware C"]
-                direction TB
-                http_req["HTTP Request"]
-                http_resp["HTTP Response"]
-                
-                http_req --> http_resp
-            end
-        end
-    end
-    
-    response["Response"]
-    
-    request --> mw_a
-    mw_a --> response
-    
-    style mw_a fill:#28a745,stroke:#1e7e34,color:#fff
-    style mw_b fill:#20c997,stroke:#17a673,color:#fff
-    style mw_c fill:#17a2b8,stroke:#117a8b,color:#fff
-    style http_req fill:#1168bd,stroke:#0d4884,color:#fff
-    style http_resp fill:#dc3545,stroke:#bd2130,color:#fff
-    style request fill:#6c757d,stroke:#495057,color:#fff
-    style response fill:#6c757d,stroke:#495057,color:#fff
+sequenceDiagram
+    participant Client
+    participant MW_A
+    participant MW_B
+    participant MW_C
+    participant HTTP
+
+    Client->>MW_A: send(RequestExchange)
+    MW_A->>MW_B: next()
+    MW_B->>MW_C: next()
+    MW_C->>HTTP: execute request
+    HTTP-->>MW_C: response
+    MW_C-->>MW_B: return
+    MW_B-->>MW_A: return
+    MW_A-->>Client: return
 ```
 
-This allows middleware to run logic **before and/or after** the HTTP request.
+The innermost node of the pipeline is the HTTP transport. Middleware never performs the network request directly; it wraps or enriches the exchange before delegating to the transport layer.
+
+### Middleware Contract
+
+All middleware must:
+
+- Accept a `RequestExchange`
+- Return a `RequestExchange`
+- Be fully async-safe
+- Be serializable via factory instantiation
+- Avoid blocking I/O
+- Avoid direct Spark API usage
+
+Middleware should fail “softly” by recording structured error information in
+`RequestExchange.metadata` rather than raising unhandled exceptions.
+
+### Middleware Types
+
+Middleware in this framework follows one of two control-flow types:
+
+#### 1. Interceptor Middleware
+
+Interceptors wrap the pipeline by calling `await next_call(exchange)`. They may execute logic both before and after the HTTP request and may alter control flow.
+Typical use cases:
+- Retry with backoff
+- Rate limiting
+- OAuth2 token refresh
+- Circuit breaking
+- Response transformation
+
+Interceptors are the most powerful middleware type and must be implemented carefully.
+
+#### 2. Non-Control Middleware
+
+Non-control middleware does not alter control flow.
+It performs deterministic mutation or observation and returns the exchange.
+Typical use cases:
+- Injecting headers or query parameters
+- Adding static metadata
+- Logging
+- Timing
+- Worker identity annotation
+
+Non-control middleware should never:
+- Retry requests
+- Raise exceptions intentionally
+- Modify success/failure semantics
+
+### Execution Semantics (Pre/Post Phases)
+
+Middleware wraps the request in a nested manner. Code executed **before** `await next_call(...)`
+runs on the outbound path (request phase). Code executed **after** `await next_call(...)`
+runs on the inbound path (response phase).
+
+Example:
+
+```python
+async def __call__(self, req: RequestExchange, nxt: NEXT_CALL):
+    # Pre-request logic
+    req.metadata["start"] = time.time()
+
+    response = await nxt(req)
+
+    # Post-response logic
+    req.metadata["duration"] = time.time() - req.metadata["start"]
+    return response
+```
+
+This allows middleware to:
+* Mutate outbound requests
+* Inspect or modify inbound responses
+* Implement retries, logging, or metrics
+
+### Stateless vs Stateful Middleware
+
+Middleware instances are created per Spark worker using runtime factories.
+
+Middleware should generally be:
+- Stateless, or
+- Maintain only worker-local state
+
+Middleware must NOT:
+- Access SparkContext
+- Perform driver-only operations
+- Assume cross-worker shared state
+
+State is never shared across Spark workers. Cross-worker coordination must be implemented externally (e.g., Redis, RPC services, or database-backed rate limiters).
+
+Middleware instances cannot be serialized from the driver to Spark workers. Instead, the driver sends configuration only. Workers instantiate middleware locally using runtime factories. This ensures transport sessions, token providers, and rate limiters are created in the correct execution environment.
+
+##### Middleware Factory
+```python
+class MiddlewareRuntimeFactory(RuntimeFactory):
+
+    @staticmethod
+    def build_factory(cfg: MiddlewareConfigModel) -> Callable[[], MIDDLEWARE_FUNC]:
+
+        def factory() -> MIDDLEWARE_FUNC:
+            return MiddlewareFactory.create(cfg.type, **cfg.to_runtime_args())
+
+        return factory
+
+    @staticmethod
+    def get_factories(mw_cfgs: list[MiddlewareConfigModel]) -> list[Callable[[], MIDDLEWARE_FUNC]]:
+        return [MiddlewareRuntimeFactory.build_factory(cfg) for cfg in mw_cfgs]
+```
+
+### Why Use a Middleware Pattern:
+1) **Separation of Concerns**
+Each middleware has a single job:
+- Auth injector: add credentials
+- Retry middleware: handle transient failures
+- Logging middleware: record requests/responses
+- Timing middleware: measure latency
+
+This makes each component simple, testable, and reusable.
+
+2) **Composability**
+Middleware can be stacked in any order via configuration:
+```yaml
+middleware:
+  - type: logging
+  - type: timing
+  - type: json_body
+  - type: retry
+    max_attempts: 5
+    retry_status_codes: [429, 500, 502, 503]
+    base_delay: 0.2
+    max_delay: 2.0
+```
+The framework builds the pipeline at runtime by wrapping each middleware around the next.
+
+3) **Extensibility**
+New middleware can be added without modifying existing code:
+```python
+class RateLimitMiddleware:
+    async def __call__(self, exchange: RequestExchange, next_middleware: NEXT_CALL):
+        await self.rate_limiter.acquire()
+        return await next_middleware(exchange)
+```
+Just add it to the configuration and the framework automatically integrates it.
+
+4. **Testability**
+Each middleware can be unit tested in isolation:
+```python
+async def test_api_key_injector():
+    middleware = HeaderAuthMiddleware(username="user", password="pass")
+
+    exchange = RequestExchange(
+        context=RequestContext(method=..., url=...)
+    )
+
+    async def mock_next(ex: RequestExchange):
+        assert "Authorization" in ex.context.headers
+        return ex
+
+    await middleware(exchange, mock_next)
+```
+
+
