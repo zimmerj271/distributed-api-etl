@@ -1,6 +1,6 @@
 # Spark REST API Configuration for Airflow DAGs
 
-This document explains how Spark jobs are submitted via the REST API and why certain configurations must be explicitly passed in the submission payload.
+This document is relevant if you are modifying the Airflow DAGs or adding new pipeline submissions. It explains how Spark jobs are submitted via the REST API and why certain configurations must be explicitly passed in the submission payload.
 
 ## Background
 
