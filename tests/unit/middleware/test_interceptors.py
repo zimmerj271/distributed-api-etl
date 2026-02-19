@@ -1,14 +1,12 @@
 """Unit tests for interceptor middleware"""
 
 import pytest
-from pyspark.sql import Row
 from unittest.mock import patch, AsyncMock
 import json
 
 from request_execution import (
     RetryMiddleware,
     JsonResponseMiddleware,
-    ParamInjectorMiddleware,
 )
 from tests.fixtures.request_execution.middleware import (
     base_exchange,
@@ -316,114 +314,3 @@ class TestJsonResponseMiddleware:
 
         assert isinstance(result.body_text, str)
         assert result.body_text == '{"data": "value"}'
-
-
-@pytest.mark.unit
-@pytest.mark.middleware
-class TestParamInjectorMiddleware:
-    """Tests for parameter injection middleware"""
-
-    @pytest.mark.asyncio
-    async def test_injects_params_from_row(self):
-        """
-        GIVEN param injector middleware
-        WHEN request context has param_mapping and row data
-        THEN params should be injected from row
-        """
-        mw = ParamInjectorMiddleware()
-
-        req = base_exchange()
-        req.context.param_mapping = {"patient_id": "tulip_id"}
-        req.context._row = Row(tulip_id="P123", other_field="value")
-
-        async def handler(r):
-            return r
-
-        result = await mw(req, handler)
-
-        assert result.context.params is not None
-        assert result.context.params["patient_id"] == "P123"
-
-    @pytest.mark.asyncio
-    async def test_injects_multiple_params(self):
-        """
-        GIVEN param injector middleware
-        WHEN request context has multiple param mappings
-        THEN all params should be injected
-        """
-        mw = ParamInjectorMiddleware()
-
-        req = base_exchange()
-        req.context.param_mapping = {"patient": "patient_id", "encounter": "encounter_id"}
-        req.context._row = Row(patient_id="P123", encounter_id="E456")
-
-        async def handler(r):
-            return r
-
-        result = await mw(req, handler)
-
-        assert result.context.params["patient"] == "P123"
-        assert result.context.params["encounter"] == "E456"
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_row(self):
-        """
-        GIVEN param injector middleware
-        WHEN request has no row data
-        THEN it should not crash and initialize params
-        """
-        mw = ParamInjectorMiddleware()
-
-        req = base_exchange()
-        req.context.param_mapping = {"patient": "patient_id"}
-        req.context._row = None
-
-        async def handler(r):
-            return r
-
-        result = await mw(req, handler)
-
-        assert result is not None
-        assert result.context.params == {}
-
-    @pytest.mark.asyncio
-    async def test_handles_no_param_mapping(self):
-        """
-        GIVEN param injector middleware
-        WHEN request context has no param_mapping
-        THEN it should initialize params and pass through
-        """
-        mw = ParamInjectorMiddleware()
-
-        req = base_exchange()
-        req.context._row = Row(patient_id="P123")
-
-        async def handler(r):
-            return r
-
-        result = await mw(req, handler)
-
-        assert result is not None
-        assert result.context.params == {}
-
-    @pytest.mark.asyncio
-    async def test_preserves_existing_params(self):
-        """
-        GIVEN param injector middleware
-        WHEN request already has params
-        THEN existing params should be preserved alongside injected ones
-        """
-        mw = ParamInjectorMiddleware()
-
-        req = base_exchange()
-        req.context.params = {"existing_param": "existing_value"}
-        req.context.param_mapping = {"patient": "patient_id"}
-        req.context._row = Row(patient_id="P123")
-
-        async def handler(r):
-            return r
-
-        result = await mw(req, handler)
-
-        assert result.context.params["existing_param"] == "existing_value"
-        assert result.context.params["patient"] == "P123"

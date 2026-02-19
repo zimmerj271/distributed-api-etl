@@ -162,23 +162,3 @@ class JsonResponseMiddleware(Middleware):
             result.error_message = f"Body binary to string conversion error: {str(e)}"
 
         return result
-
-
-class ParamInjectorMiddleware(Middleware):
-    """
-    Injects row-level query params to the RequestContext.
-    """
-
-    async def __call__(
-        self, request_exchange: RequestExchange, next_call: NEXT_CALL
-    ) -> RequestExchange:
-        ctx = request_exchange.context
-
-        if ctx.params is None:
-            ctx.params = {}
-
-        if ctx.param_mapping is not None and ctx._row is not None:
-            for param, col in ctx.param_mapping.items():
-                ctx.params[param] = ctx._row[col]
-
-        return await next_call(request_exchange)

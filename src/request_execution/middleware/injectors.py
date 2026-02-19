@@ -1,4 +1,4 @@
-# Middleware components that observe but does not change the request or response
+import base64
 import os
 import socket
 import threading
@@ -6,14 +6,85 @@ import time
 from datetime import datetime, timezone
 from aiohttp import ClientTimeout
 
+from auth.token.token_manager import TokenManager
 from request_execution.models import RequestExchange
 from request_execution.middleware.pipeline import (
-    NEXT_CALL, 
-    Middleware, 
+    Middleware,
+    NEXT_CALL,
     MiddlewareFactory,
-    MiddlewareType
+    MiddlewareType,
 )
 from request_execution.transport.base import TransportEngine
+
+
+# Standard middleware - these middleware objects mutate requests
+
+
+@MiddlewareFactory.register(MiddlewareType.BEARER)
+class BearerTokenMiddleware(Middleware):
+    """
+    Inject a bearer token into the Authorization header using an async token provider.
+    """
+
+    def __init__(self, token_manager: TokenManager) -> None:
+        self.token_manager = token_manager
+
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
+        token_value = await self.token_manager.get_token_value()
+
+        request_exchange.context = request_exchange.context.with_headers(
+            request_exchange.context,
+            new_headers={"Authorization": f"Bearer {token_value}"},
+        )
+
+        request_exchange.metadata["token_provider"] = (
+            self.token_manager.provider.token_telemetry()
+        )
+
+        return await next_call(request_exchange)
+
+
+@MiddlewareFactory.register(MiddlewareType.HEADER)
+class HeaderAuthMiddleware(Middleware):
+    def __init__(self, username: str, password: str) -> None:
+        self.username = username
+        self.password = password
+
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
+        raw_credentials = f"{self.username}:{self.password}"
+        b64_credentials = base64.b64encode(raw_credentials.encode("utf-8")).decode(
+            "utf-8"
+        )
+        auth_header = {"Authorization": f"Basic {b64_credentials}"}
+
+        request_exchange.context = request_exchange.context.with_headers(
+            request_exchange.context, auth_header
+        )
+        return await next_call(request_exchange)
+
+
+class ParamInjectorMiddleware(Middleware):
+    """
+    Injects row-level query params to the RequestContext.
+    """
+
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
+        ctx = request_exchange.context
+
+        if ctx.params is None:
+            ctx.params = {}
+
+        if ctx.param_mapping is not None and ctx._row is not None:
+            for param, col in ctx.param_mapping.items():
+                ctx.params[param] = ctx._row[col]
+
+        return await next_call(request_exchange)
 
 
 @MiddlewareFactory.register(MiddlewareType.LOGGING)
@@ -23,9 +94,13 @@ class LoggingMiddleware(Middleware):
     added to the RequestExchange.metadata.
     """
 
-    async def __call__(self, request_exchange: RequestExchange, next_call: NEXT_CALL) -> RequestExchange:
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
         logs = request_exchange.metadata.setdefault("logs", [])
-        logs.append(f"-> {request_exchange.context.method.name} {request_exchange.context.url}")
+        logs.append(
+            f"-> {request_exchange.context.method.name} {request_exchange.context.url}"
+        )
 
         result = await next_call(request_exchange)
 
@@ -44,7 +119,9 @@ class TimingMiddleware(Middleware):
     the timing info in RequestExchange.metadata["timing"]
     """
 
-    async def __call__(self, request_exchange: RequestExchange, next_call: NEXT_CALL) -> RequestExchange:
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
         start = time.monotonic()
         result: RequestExchange = await next_call(request_exchange)
         end = time.monotonic()
@@ -65,7 +142,7 @@ class WorkerIdentityMiddleware(Middleware):
         - pid
         - thread_id
         - Spark executor ID (if available)
-        - Python worker ID 
+        - Python worker ID
         - Executor start time
     """
 
@@ -77,7 +154,9 @@ class WorkerIdentityMiddleware(Middleware):
         self.python_worker_index = os.environ.get("PYSPARK_WORKER")
         self.start_time = datetime.now(timezone.utc).isoformat()
 
-    async def __call__(self, request_exchange: RequestExchange, next_call: NEXT_CALL) -> RequestExchange:
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
         identity = request_exchange.metadata.setdefault("executor_identity", {})
 
         identity.setdefault("hostname", self.hostname)
@@ -98,10 +177,14 @@ class TransportDiagnosticMiddleware(Middleware):
     def __init__(self, transport: TransportEngine) -> None:
         self._transport = transport
 
-    async def __call__(self, request_exchange: RequestExchange, next_call: NEXT_CALL) -> RequestExchange:
+    async def __call__(
+        self, request_exchange: RequestExchange, next_call: NEXT_CALL
+    ) -> RequestExchange:
         warmup_error: str | None = getattr(self._transport, "_warmup_error", None)
         warmed_up: bool | None = getattr(self._transport, "_warmed_up", None)
-        warmup_timeout: ClientTimeout | None = getattr(self._transport, "_warmup_timeout", None)
+        warmup_timeout: ClientTimeout | None = getattr(
+            self._transport, "_warmup_timeout", None
+        )
 
         if warmup_timeout is not None:
             warmup_timeout_value = warmup_timeout.total
@@ -114,4 +197,3 @@ class TransportDiagnosticMiddleware(Middleware):
         warmup.setdefault("warmup_timeout", warmup_timeout_value)
 
         return await next_call(request_exchange)
-
