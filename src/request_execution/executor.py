@@ -1,6 +1,5 @@
 from typing import Protocol, Any, Callable
 
-from request_execution.middleware.listeners import TransportDiagnosticMiddleware
 from request_execution.transport.base import TransportEngine
 from request_execution.models import RequestContext, RequestExchange
 from request_execution.transport.base import TransportRequest

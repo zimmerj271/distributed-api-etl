@@ -17,18 +17,16 @@ from request_execution.middleware.pipeline import (
 )
 from request_execution.middleware.interceptors import (
     JsonResponseMiddleware,
-    ParamInjectorMiddleware,
     RetryMiddleware,
 )
-from request_execution.middleware.listeners import (
+from request_execution.middleware.injectors import (
+    BearerTokenMiddleware,
+    HeaderAuthMiddleware,
     LoggingMiddleware,
+    ParamInjectorMiddleware,
     TimingMiddleware,
     TransportDiagnosticMiddleware,
     WorkerIdentityMiddleware,
-)
-from request_execution.middleware.common import (
-    BearerTokenMiddleware,
-    HeaderAuthMiddleware,
 )
 
 __all__ = [
