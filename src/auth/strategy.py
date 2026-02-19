@@ -14,7 +14,7 @@ from auth.token.token_provider import (
 )
 from auth.token.token_manager import TokenManager
 from auth.rpc.bootstrap import RpcBootstrapper
-from request_execution.middleware.common import (
+from request_execution.middleware.injectors import (
     BearerTokenMiddleware,
     HeaderAuthMiddleware,
 )

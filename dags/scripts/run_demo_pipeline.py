@@ -57,9 +57,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def create_source_dataframe(
-    spark: SparkSession, num_records: int, num_partitions: int
-):
+def create_source_dataframe(spark: SparkSession, num_records: int, num_partitions: int):
     """Create a source DataFrame with unique tracking IDs."""
     return (
         spark.range(num_records)
@@ -84,7 +82,7 @@ def main() -> int:
 
     try:
         # Import pipeline orchestrator
-        from pipeline.orchestrator import run_pipeline
+        from orchestration.orchestrator import run_pipeline
 
         # Create source DataFrame
         print(f"Creating source DataFrame with {args.num_records} records...")
