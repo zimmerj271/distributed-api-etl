@@ -76,6 +76,7 @@ ifndef DAG
 	@echo "Available DAGs:"
 	@docker exec airflow-scheduler airflow dags list -o plain | tail -n +2 | awk '{print "  - " $$1}'
 else
+	docker exec airflow-scheduler airflow dags unpause $(DAG)
 	docker exec airflow-scheduler airflow dags trigger $(DAG)
 endif
 
