@@ -49,6 +49,7 @@ flowchart LR
 
 ```bash
 # 1. Build Docker images
+
 make build-demo
 
 # 2. Start the platform
@@ -57,6 +58,23 @@ make up-demo
 # 3. Wait for services (~60-90s for all health checks)
 make ps
 ```
+
+### Scaling the Spark Cluster
+The default number of worker nodes in the spark cluster is 2. The number of worker nodes 
+can be increased or decreased to a target number by using the parameter `WORKERS`. For example
+starting the demo with 4 workers, use the command:
+
+```bash
+make up-demo WORKERS=4
+```
+
+The number of workers can be resized at any time after the demo is initiated by setting the
+number of workers:
+
+```bash
+make up WORKERS=3
+```
+
 
 ## Running Pipelines
 
