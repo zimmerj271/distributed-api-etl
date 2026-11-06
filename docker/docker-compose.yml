@@ -65,8 +65,9 @@ services:
       timeout: 5s
       retries: 5
 
+  # Using silo instead of minIO due to discontinuation of minIO. Using mirrored repo for image.
   minio:
-    image: minio/minio:latest
+    image: ghcr.io/zimmerj271/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     container_name: minio
     command: server /data --console-address ":9001"
     environment:
@@ -86,7 +87,7 @@ services:
       retries: 5
 
   minio-init:
-    image: minio/mc:latest
+    image: ghcr.io/zimmerj271/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
     container_name: minio-init
     entrypoint: >
       /bin/sh -c "
@@ -236,7 +237,11 @@ services:
     container_name: airflow-scheduler
     command: scheduler
     healthcheck:
-      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      test:
+        [
+          "CMD-SHELL",
+          "airflow jobs check --job-type SchedulerJob --hostname $(hostname)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -306,7 +311,11 @@ services:
     networks:
       - etl-network
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'",
+        ]
       interval: 30s
       timeout: 10s
       retries: 5
