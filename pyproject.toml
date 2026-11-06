@@ -1,3 +1,38 @@
+[project]
+name = "distributed-api-etl"
+version = "0.1.0"
+description = "Configuration-driven Spark ETL framework for distributing REST API requests across a Spark cluster"
+readme = "README.md"
+license = "MIT"
+# PySpark 3.5.x supports Python <= 3.11. The Spark cluster images run Python 3.10.
+requires-python = ">=3.10,<3.12"
+# Runtime pins mirror docker/requirements.txt, which is what the Spark cluster,
+# Airflow, and Jupyter images install. Keep the two in sync.
+dependencies = [
+    "pyyaml==6.0.3",
+    "aiohttp==3.10.11",
+    "pydantic==2.10.6",
+    "requests==2.32.4",
+    "pyspark==3.5.1",
+    "delta-spark==3.0.0",
+    "ipython==8.13.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-aiohttp",
+    "pytest-spark",
+    "ruff",
+    "pyright",
+]
+
+[tool.uv]
+# Source code is imported via `pythonpath` (see pytest config) and volume mounts
+# in the containers; it is not built or installed as a package.
+package = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
