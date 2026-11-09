@@ -1,13 +1,7 @@
 x-spark-common: &spark-common
   image: ${PROJECT_NAME:-distributed-api-etl}-spark:latest
-  environment:
-    - SPARK_MASTER_URL=spark://spark-master:7077
-    - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
-    - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
-    - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-    - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-    - AWS_REGION=us-east-1
-    - PYTHONPATH=/opt/spark/app/src
+  # No shared `environment:` here: YAML merge (<<) replaces lists rather than
+  # appending to them, so each Spark service defines its own environment.
   volumes:
     - ../src:/opt/spark/app/src:ro
     - ../tests:/opt/spark/app/tests:ro
@@ -189,11 +183,25 @@ services:
         "org.apache.spark.deploy.worker.Worker",
         "spark://spark-master:7077",
       ]
+    # Worker sizing is set through the Makefile (WORKER_CORES / WORKER_MEMORY),
+    # which exports SPARK_WORKER_CORES / SPARK_WORKER_MEMORY. The fallbacks below
+    # only apply to plain `docker compose` commands and must match the Makefile
+    # defaults.
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-3}
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2G}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_REGION=us-east-1
+      - PYTHONPATH=/opt/spark/app/src
     depends_on:
       spark-master:
         condition: service_healthy
+    # The worker count is set by the Makefile (`--scale spark-worker=$(WORKERS)`),
+    # which overrides this value. It only applies to a plain `docker compose up`.
     deploy:
-      replicas: ${SPARK_WORKERS:-2}
+      replicas: 2
 
   # ============================================================
   # AIRFLOW
@@ -304,6 +312,8 @@ services:
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Exposes /health/ready, which the healthcheck below depends on.
+      KC_HEALTH_ENABLED: "true"
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     ports:
@@ -337,7 +347,9 @@ services:
     networks:
       - etl-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      # 127.0.0.1 rather than localhost: busybox wget resolves localhost to ::1,
+      # but uvicorn only listens on IPv4.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 3
