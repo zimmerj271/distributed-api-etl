@@ -6,9 +6,13 @@ All services are defined in `docker/docker-compose.yml` and orchestrated through
 
 ## Prerequisites
 
-- Docker and Docker Compose V2
-- `direnv` (optional, for automatic environment variable loading from `.envrc`)
-- GNU Make
+See [Requirements](../README.md#requirements) in the README for the required tools, hardware, and ports.
+
+All platform settings are passed as Makefile parameters (for example `make up-demo WORKERS=3`). The
+project doesn't use `.env` files. The service credentials are fixed demo defaults (see
+[Default Credentials](#default-credentials)); `docker/spark/spark-defaults.conf` and
+`docker/jupyter/spark-defaults.conf` hardcode the MinIO credentials, so don't change them in only
+one place.
 
 ## Platform Architecture
 
@@ -68,8 +72,12 @@ flowchart TB
 | Service | Image | Container | Ports | Purpose |
 |---------|-------|-----------|-------|---------|
 | `postgres` | `postgres:15-alpine` | `postgres` | 5432 | Shared relational database for Hive Metastore catalog and Airflow metadata |
-| `minio` | `minio/minio:latest` | `minio` | 9000 (API), 9001 (Console) | S3-compatible object store serving as the data lake for Parquet and Delta Lake files |
-| `minio-init` | `minio/mc:latest` | `minio-init` | -- | One-shot container that creates `warehouse` and `spark-logs` buckets, then exits |
+| `minio` | `ghcr.io/zimmerj271/silo` (pinned release) | `minio` | 9000 (API), 9001 (Console) | S3-compatible object store serving as the data lake for Parquet and Delta Lake files |
+| `minio-init` | `ghcr.io/zimmerj271/mc` (pinned release) | `minio-init` | -- | One-shot container that creates `warehouse` and `spark-logs` buckets, then exits |
+
+The upstream MinIO images were discontinued, so the stack uses Silo and `mc` images from a mirrored
+repository instead, pinned by digest in `docker/docker-compose.yml`. The service is still called
+`minio` and is used in the same way.
 
 **PostgreSQL** hosts two databases, created by `docker/postgres/init-multiple-dbs.sh`:
 - `metastore` -- Hive Metastore schema catalog
@@ -95,11 +103,21 @@ docker exec -it postgres psql -U postgres
 | Service | Image | Container | Ports | Purpose |
 |---------|-------|-----------|-------|---------|
 | `spark-master` | `distributed-api-etl-spark:latest` | `spark-master` | 7077 (cluster), 8080 (UI), 6066 (REST API) | Spark cluster manager |
-| `spark-worker` | `distributed-api-etl-spark:latest` | auto-generated | -- | Spark execution nodes (2 replicas by default) |
+| `spark-worker` | `distributed-api-etl-spark:latest` | `distributed-api-etl-spark-worker-N` | -- | Spark execution nodes (2 by default) |
 
 **Spark Master** accepts job submissions on port 7077 (RPC) or 6066 (REST API) and distributes work across workers. The web UI at `http://localhost:8080` shows active applications and worker status.
 
-**Spark Workers** register with the master and provide CPU and memory for task execution. The number of workers is controlled by the `SPARK_WORKERS` environment variable (default: 2).
+**Spark Workers** register with the master and provide task slots and memory for task execution. The cluster is sized with three Makefile parameters, passed to any `make up-*` target:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `WORKERS` | `2` | Number of worker containers |
+| `WORKER_CORES` | `3` | Task slots per worker |
+| `WORKER_MEMORY` | `2G` | Memory per worker for Spark drivers and executors |
+
+For example: `make up-demo WORKERS=3 WORKER_CORES=2 WORKER_MEMORY=3G`. See [Cluster Sizing](cluster-sizing.md) for how to choose values, or run `make sizing`.
+
+How they reach Docker Compose: `WORKERS` becomes `--scale spark-worker=N` on the `docker compose up` command. `WORKER_CORES` and `WORKER_MEMORY` are exported as `SPARK_WORKER_CORES` and `SPARK_WORKER_MEMORY`, which `docker-compose.yml` passes to the worker containers. The fallback values in `docker-compose.yml` (`deploy.replicas: 2`, `:-3`, `:-2G`) only apply to plain `docker compose` commands run without the Makefile.
 
 ### Orchestration Services
 
@@ -213,8 +231,10 @@ Build all required images with `make build`.
 | `make up-keycloak` | Start with Keycloak and mock-api |
 | `make up-demo` | Start all services for demos |
 | `make up-all` | Start all services including all profiles |
-| `make down` | Stop all services |
-| `make restart` | Stop and start all services |
+| `make down` | Stop and remove all containers (data volumes are kept) |
+| `make restart` | Restart running containers in place (keeps profiles and cluster size; doesn't apply changes) |
+
+All `up` targets accept `WORKERS`, `WORKER_CORES`, and `WORKER_MEMORY`. Run `make sizing` to get suggested values for your machine.
 
 ### Building Images
 
@@ -235,7 +255,8 @@ Build all required images with `make build`.
 | `make logs` | Tail logs for all services |
 | `make logs SERVICE=<name>` | Tail logs for a specific service |
 | `make ps` | Show running containers |
-| `make shell CONTAINER=<name>` | Open bash shell in container |
+| `make shell CONTAINER=<name>` | Open bash shell in a service (use the service name, e.g. `spark-master`) |
+| `make sizing` | Suggest cluster parameters for this machine |
 | `make clean` | Stop containers and remove networks |
 | `make clean-volumes` | Stop and remove all volumes |
 | `make clean-all` | Full cleanup including images |
@@ -247,11 +268,26 @@ Build all required images with `make build`.
 | `make spark-shell` | Open PySpark shell |
 | `make spark-submit APP=<path>` | Submit Spark job |
 | `make spark-sql` | Open Spark SQL shell |
+| `make driver-logs [ID=driver-...]` | Show a Spark driver's logs from the worker it ran on (default: latest) |
 
-### Development
+### Airflow Operations
 
 | Command | Description |
 |---------|-------------|
+| `make dag-list` | List DAGs and whether they're paused |
+| `make dag-trigger DAG=<dag_id>` | Unpause and trigger a DAG |
+| `make dag-status` | Latest run of every DAG |
+| `make dag-status DAG=<dag_id> [RUN=<run_id>]` | Recent runs of one DAG; with `RUN`, the state of each task |
+| `make dag-logs DAG=<dag_id> TASK=<task_id> [RUN=<run_id>]` | Latest Airflow log for a task |
+
+### Development
+
+These run on the host and need the local Python environment (see [Local Development](../README.md#local-development) in the README).
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Create or update `.venv` with uv |
+| `make requirements` | Regenerate `requirements.txt` from `uv.lock` |
 | `make test` | Run all tests |
 | `make test-unit` | Run unit tests |
 | `make test-integration` | Run integration tests |
