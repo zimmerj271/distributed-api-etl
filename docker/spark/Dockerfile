@@ -32,6 +32,12 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # Create work directory with proper permissions for Spark workers
 RUN mkdir -p /opt/spark/work && chown -R spark:spark /opt/spark/work
 
+# Event log directory (mounted as the `spark-logs` volume). Docker initializes a
+# new named volume with this directory's ownership, so it must exist and be owned
+# by the spark user; otherwise drivers fail with "Permission denied" when
+# spark.eventLog.enabled=true.
+RUN mkdir -p /opt/spark/spark-events && chown -R spark:spark /opt/spark/spark-events
+
 # Copy application code (can be overridden by volume mounts in development)
 COPY src/ /opt/spark/work/src/
 

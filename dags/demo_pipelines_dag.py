@@ -182,6 +182,7 @@ def run_spark_pipeline(
     num_records: int = 100,
     driver_memory: str | None = None,
     executor_memory: str | None = None,
+    max_cores: int | None = None,
     **context,
 ) -> None:
     """Submit and monitor a Spark pipeline job.
@@ -191,6 +192,9 @@ def run_spark_pipeline(
         num_records: Number of records to generate for the demo
         driver_memory: Override driver memory (e.g., "512m", "1g")
         executor_memory: Override executor memory (e.g., "512m", "1g")
+        max_cores: Cap on the total executor cores this application may take
+            (spark.cores.max). Without a cap, a standalone-cluster application
+            takes every free core, so concurrent jobs end up running one at a time.
     """
     app_name = f"{config_name}_pipeline"
     # Path without file: prefix for PythonRunner
@@ -207,6 +211,10 @@ def run_spark_pipeline(
         extra_props["spark.driver.memory"] = driver_memory
     if executor_memory:
         extra_props["spark.executor.memory"] = executor_memory
+    if max_cores:
+        extra_props["spark.cores.max"] = str(max_cores)
+        # 1-core executors so the cap can be filled from any worker's free slots
+        extra_props["spark.executor.cores"] = "1"
 
     # Submit the job
     submission_id = submit_spark_job(
@@ -402,9 +410,16 @@ with DAG(
 
 # DAG 6: All Demos in Parallel
 # This DAG runs all demo pipelines simultaneously to showcase distributed parallelism
-# Uses reduced memory settings to allow 5 concurrent jobs on limited resources
+# Uses reduced memory and a 1-core cap per job so 5 concurrent jobs fit on a
+# workstation-sized cluster. Each job needs 1 core for its driver (which runs on a
+# worker in cluster mode) plus 1 core for its executor:
+#   - 10 task slots (WORKERS x WORKER_CORES): all 5 jobs run at the same time
+#   - 6-9 slots: jobs run partly in parallel, the rest queue
+#   - 5 or fewer slots: drivers take every core and the DAG hangs
+# See docs/cluster-sizing.md.
 PARALLEL_DRIVER_MEMORY = "512m"
 PARALLEL_EXECUTOR_MEMORY = "512m"
+PARALLEL_MAX_CORES = 1
 
 with DAG(
     dag_id="demo_all_pipelines_parallel",
@@ -435,6 +450,7 @@ with DAG(
             "config_name": "noauth_demo",
             "driver_memory": PARALLEL_DRIVER_MEMORY,
             "executor_memory": PARALLEL_EXECUTOR_MEMORY,
+            "max_cores": PARALLEL_MAX_CORES,
         },
     )
 
@@ -445,6 +461,7 @@ with DAG(
             "config_name": "basic_auth_demo",
             "driver_memory": PARALLEL_DRIVER_MEMORY,
             "executor_memory": PARALLEL_EXECUTOR_MEMORY,
+            "max_cores": PARALLEL_MAX_CORES,
         },
     )
 
@@ -455,6 +472,7 @@ with DAG(
             "config_name": "bearer_token_demo",
             "driver_memory": PARALLEL_DRIVER_MEMORY,
             "executor_memory": PARALLEL_EXECUTOR_MEMORY,
+            "max_cores": PARALLEL_MAX_CORES,
         },
     )
 
@@ -465,6 +483,7 @@ with DAG(
             "config_name": "oauth2_user_credentials_demo",
             "driver_memory": PARALLEL_DRIVER_MEMORY,
             "executor_memory": PARALLEL_EXECUTOR_MEMORY,
+            "max_cores": PARALLEL_MAX_CORES,
         },
     )
 
@@ -475,6 +494,7 @@ with DAG(
             "config_name": "oauth2_client_credentials_demo",
             "driver_memory": PARALLEL_DRIVER_MEMORY,
             "executor_memory": PARALLEL_EXECUTOR_MEMORY,
+            "max_cores": PARALLEL_MAX_CORES,
         },
     )
 
